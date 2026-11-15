@@ -1,0 +1,7 @@
+package-as: RainonUI_Forever
+enable-nolib-creation: no
+ignore:
+  - LocalData.lua
+  - Junk.lua
+  - AGENTS.md
+  - .gitignore
