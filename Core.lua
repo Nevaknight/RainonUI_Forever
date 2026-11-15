@@ -43,19 +43,31 @@ function ns.Enabled(key)
     return ns.db and ns.db.features[key] == true
 end
 
-local panel
+local panel, minimapButton
 local iconPath = "Interface\\AddOns\\RainonUI_Forever\\Media\\logo"
 
-function ns.ToggleOptions()
+function ns.ToggleOptions(tab)
     if not ns.db then return end
     panel = panel or ns.BuildOptions(settings, extraOptions)
-    panel:SetShown(not panel:IsShown())
+    if tab then
+        panel:SelectTab(tab)
+        panel:Show()
+    else
+        panel:SetShown(not panel:IsShown())
+    end
 end
+
+local function UpdateMinimapButton()
+    if minimapButton then minimapButton:SetShown(ns.Enabled("minimap")) end
+end
+
+ns.AddSetting("minimap", "Иконка у миникарты", UpdateMinimapButton)
 
 local function CreateMinimapButton()
     if not Minimap then return end
 
     local button = CreateFrame("Button", "RainonUIForeverMinimapButton", Minimap)
+    minimapButton = button
     button:SetSize(31, 31)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel(Minimap:GetFrameLevel() + 8)
@@ -98,12 +110,14 @@ local function CreateMinimapButton()
         Place()
     end
 
-    button:SetScript("OnClick", ns.ToggleOptions)
+    button:SetScript("OnClick", function() ns.ToggleOptions() end)
     button:SetScript("OnDragStart", function(self)
         GameTooltip:Hide()
         self:SetScript("OnUpdate", FollowCursor)
     end)
-    button:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+    local function StopDragging(self) self:SetScript("OnUpdate", nil) end
+    button:SetScript("OnDragStop", StopDragging)
+    button:SetScript("OnHide", StopDragging)
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText("RainonUI — Forever")
@@ -114,6 +128,7 @@ local function CreateMinimapButton()
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
     Minimap:HookScript("OnSizeChanged", Place)
     Place()
+    UpdateMinimapButton()
 end
 
 ns.On("ADDON_LOADED", function(name)
@@ -122,6 +137,7 @@ ns.On("ADDON_LOADED", function(name)
     ns.db = RainonUIForeverDB
     ns.db.features = ns.db.features or {}
     ns.db.rest = ns.db.rest or {}
+    ns.db.restCharacters = ns.db.restCharacters or {}
     for _, option in ipairs(settings) do
         if ns.db.features[option.key] == nil then
             ns.db.features[option.key] = not option.optIn
@@ -133,9 +149,5 @@ ns.On("PLAYER_LOGIN", CreateMinimapButton)
 
 SLASH_RAINONUIFOREVER1 = "/rsf"
 SlashCmdList.RAINONUIFOREVER = function(msg)
-    if msg == "rest" and ns.ShowRest then
-        ns.ShowRest()
-    else
-        ns.ToggleOptions()
-    end
+    ns.ToggleOptions(msg == "rest" and "characters" or nil)
 end

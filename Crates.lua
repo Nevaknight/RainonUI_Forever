@@ -77,7 +77,7 @@ local function AddCrateLines(tooltip, id)
     if best and api.GetAuctionAgeByItemID then
         local ok, age = pcall(api.GetAuctionAgeByItemID, ns.ADDON, best.id)
         age = ok and ns.Number(age)
-        if age and age > 0 then scan = scan .. (" · цена %d дн. назад"):format(age) end
+        if age and age > 0 then scan = scan .. (" (цена %d дн. назад)"):format(age) end
     end
     tooltip:AddLine(scan, 0.75, 0.75, 0.75, true)
 end
