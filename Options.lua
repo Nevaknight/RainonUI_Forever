@@ -4,6 +4,7 @@ local tabs = {
     { key = "general", title = "Общие", icon = "Interface\\AddOns\\RainonUI_Forever\\Media\\logo" },
     { key = "equipment", title = "Экипировка", icon = "Interface\\Icons\\INV_Chest_Chain_05" },
     { key = "professions", title = "Профессии", icon = 136249 },
+    { key = "macros", title = "Макросы", icon = "Interface\\Icons\\ClassIcon_Paladin" },
 }
 
 local function MakeCheck(page, option, x, y, refresh)
@@ -93,6 +94,54 @@ local function NumberOptions(page)
     return dropdown, label
 end
 
+local function BuildMacrosPage(page)
+    local name = "1.0_RainonUIF"
+    local icon = 132347 -- Seal of Command
+    local body = "/castsequence Seal of Command(Rank 4), Seal of Righteousness(Rank 3)"
+
+    local info = page:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    info:SetPoint("TOPLEFT", 6, -36)
+    info:SetText("Макрос для английского клиента. После создания открой /macro.")
+
+    local button = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+    button:SetSize(220, 24)
+    button:SetPoint("TOPLEFT", info, "BOTTOMLEFT", 0, -12)
+    button:SetText("Создать: Чередование печатей")
+    button:SetScript("OnClick", function()
+        local prefix = "RainonUI — Forever: "
+        if InCombatLockdown() then
+            DEFAULT_CHAT_FRAME:AddMessage(prefix .. "Выйди из боя, чтобы создать или обновить макрос.")
+            return
+        end
+
+        local accountCount = GetNumMacros()
+        local index
+        for i = 1, accountCount do
+            if GetMacroInfo(i) == name then
+                index = i
+                break
+            end
+        end
+        if not index and accountCount >= Constants.MacroConsts.MAX_ACCOUNT_MACROS then
+            DEFAULT_CHAT_FRAME:AddMessage(prefix .. "Освободи место в общих макросах (/macro).")
+            return
+        end
+
+        local ok, savedIndex
+        if index then
+            ok, savedIndex = pcall(EditMacro, index, name, icon, body)
+        else
+            ok, savedIndex = pcall(CreateMacro, name, icon, body, false)
+        end
+        if ok and savedIndex and savedIndex > 0 then
+            local action = index and "обновлён" or "создан"
+            DEFAULT_CHAT_FRAME:AddMessage(prefix .. "Макрос " .. name .. " " .. action .. " в общих макросах (/macro).")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage(prefix .. "Не удалось сохранить макрос.")
+        end
+    end)
+end
+
 function ns.BuildOptions(settings, extraOptions)
     local window = CreateFrame("Frame", "RainonUIForeverOptions", UIParent, "BasicFrameTemplateWithInset")
     window:SetSize(620, 590)
@@ -130,6 +179,8 @@ function ns.BuildOptions(settings, extraOptions)
         pages[i], pagesByKey[entry.key] = page, page
         tabButtons[i] = MakeTab(window, entry, i, SelectTab)
     end
+
+    BuildMacrosPage(pagesByKey.macros)
 
     local subheading = pagesByKey.equipment:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     subheading:SetPoint("TOPLEFT", 6, -36)

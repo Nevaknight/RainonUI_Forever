@@ -1,5 +1,8 @@
 package-as: RainonUI_Forever
 enable-nolib-creation: no
+manual-changelog:
+  filename: Changelog.md
+  markup-type: markdown
 ignore:
   - LocalData.lua
   - Junk.lua
