@@ -8,3 +8,10 @@ ignore:
   - Junk.lua
   - AGENTS.md
   - .gitignore
+  - .gitattributes
+  - .claude
+  - .codex
+  - .agents
+  - CLAUDE.md
+  - _to_delete
+  - README.md

@@ -1,2 +1,13 @@
 /LocalData.lua
 /Junk.lua
+/.claude/
+/.codex/
+/.agents/
+/AGENTS.md
+/CLAUDE.md
+/_to_delete/
+*.bak
+*.tmp
+*.zip
+*.7z
+*.rar
