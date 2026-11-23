@@ -22,9 +22,11 @@ local entryStyles = {
     dungeonLootWindow = { title = "Добыча", detail = "Окно в подземелье", icon = "Interface\\Icons\\INV_Misc_Key_10",
         tooltip = "Открывает список добычи при входе в подземелье." },
     dungeonLootCatalog = { title = "Добыча", detail = "Все подземелья", icon = "Interface\\Icons\\INV_Misc_Book_11",
-        tooltip = "Shift + ЛКМ по значку RainonUI у миникарты открывает каталог добычи." },
+        tooltip = "Shift + ЛКМ по значку RainonUI у миникарты открывает каталог добычи.\nБаза рейтинга берётся с сайта https://wowtbc.gg/" },
     updateNotice = { icon = "Interface\\Icons\\INV_Scroll_03",
         tooltip = "Показывает окно обновлений аддона при заходе в игру" },
+    confirmBoESale = { title = "Продажа вещей", detail = "С подтверждением", icon = 133784,
+        tooltip = "Спрашивает перед продажей торговцу предмета, который станет персональным при надевании." },
     itemNotes = { title = "Личные подсказки", detail = "Предметы", icon = 134331 },
 }
 

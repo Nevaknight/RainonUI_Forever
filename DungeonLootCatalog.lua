@@ -39,6 +39,7 @@ end
 local window, scroll, content, specFilter, grow, shrink, empty, rankSlider
 local slotFilter, slotRefreshQueued
 local settings, entries
+local RenderCatalog
 local rows, pendingIcons, pendingSlots = {}, {}, {}
 local allSpecs = { true, true, true }
 
@@ -71,6 +72,15 @@ local function HideTooltip(button)
     if GameTooltip:IsOwned(button) then GameTooltip:Hide() end
 end
 
+local function ShowItemTooltip(button)
+    GameTooltip:SetOwner(button, "ANCHOR_CURSOR")
+    GameTooltip:SetItemByID(button.rainonDungeonLootID)
+    source.addRanks(GameTooltip)
+    local action = settings.favorites[button.rainonDungeonLootID] and "убрать из избранного" or "добавить в избранное"
+    GameTooltip:AddLine("ПКМ — " .. action, 1, 0.82, 0)
+    GameTooltip:Show()
+end
+
 local function CreateCell(row)
     local button = CreateFrame("Button", nil, row)
     button:SetSize(32, 32)
@@ -93,12 +103,30 @@ local function CreateCell(row)
     badge:SetPoint("BOTTOMRIGHT", -2, 2)
     button.rank = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall", 1)
     button.rank:SetPoint("CENTER", badge)
-    button:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-        GameTooltip:SetItemByID(self.rainonDungeonLootID)
-        source.addRanks(GameTooltip)
-        GameTooltip:Show()
+    button.favorite = button:CreateTexture(nil, "OVERLAY", nil, 2)
+    button.favorite:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_1")
+    button.favorite:SetSize(12, 12)
+    button.favorite:SetPoint("TOPLEFT", 2, -2)
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self)
+        local id = self.rainonDungeonLootID
+        if not id then return end
+        settings.favorites[id] = not settings.favorites[id] or nil
+        if settings.favoritesOnly then
+            RenderCatalog()
+        else
+            -- The same item may be listed in more than one dungeon.
+            for _, dungeonRow in ipairs(rows) do
+                for _, cell in ipairs(dungeonRow.cells) do
+                    if cell.rainonDungeonLootID == id then
+                        cell.favorite:SetShown(settings.favorites[id] == true)
+                    end
+                end
+            end
+            if GameTooltip:IsOwned(self) then ShowItemTooltip(self) end
+        end
     end)
+    button:SetScript("OnEnter", ShowItemTooltip)
     button:SetScript("OnLeave", HideTooltip)
     button:SetScript("OnHide", HideTooltip)
     return button
@@ -138,6 +166,7 @@ local function FillCell(button, item)
     button.icon:SetShown(item ~= nil)
     button.rank:SetShown(item ~= nil)
     button.badge:SetShown(item ~= nil)
+    button.favorite:SetShown(item ~= nil and settings.favorites[item.id] == true)
     if not item then return end
 
     button.rank:SetText(item.rank)
@@ -225,6 +254,9 @@ local function UpdateSlotCaption()
     end
     local caption = first or "Все слоты"
     if count > 1 then caption = ("%s + %d"):format(caption, count - 1) end
+    if settings.favoritesOnly then
+        caption = count > 0 and ("Избранное + %d"):format(count) or "Избранное"
+    end
     slotFilter:OverrideText(caption)
 end
 
@@ -232,8 +264,10 @@ local function SelectedSpecs()
     return settings.specs or allSpecs
 end
 
-local function RenderCatalog()
+RenderCatalog = function()
     pendingIcons = {}
+    local favoritesOnly = settings.favoritesOnly == true
+    rankSlider:SetShown(not favoritesOnly)
     local selected = SelectedSpecs()
     local filterSlots = next(settings.slots) ~= nil
     local top, visible = 0, 0
@@ -241,7 +275,8 @@ local function RenderCatalog()
         local items = {}
         for _, id in ipairs(entry.items) do
             local rank = source.bestRank(id, selected)
-            if rank and rank <= settings.maximum and (not filterSlots or MatchesSlot(id)) then
+            if rank and (favoritesOnly or rank <= settings.maximum) and (not favoritesOnly or settings.favorites[id])
+                and (not filterSlots or MatchesSlot(id)) then
                 items[#items + 1] = { id = id, rank = rank }
             end
         end
@@ -353,9 +388,15 @@ local function CreateWindow()
     slotFilter:SetupMenu(function(_, menu)
         local reset = menu:CreateButton("Сбросить фильтр", function()
             settings.slots = {}
+            settings.favoritesOnly = nil
             RenderCatalog()
         end)
         reset:SetResponse(MenuResponse.Refresh)
+        local favorites = menu:CreateCheckbox("Избранное", function() return settings.favoritesOnly == true end, function()
+            settings.favoritesOnly = not settings.favoritesOnly or nil
+            RenderCatalog()
+        end)
+        favorites:SetResponse(MenuResponse.Refresh)
         menu:CreateDivider()
         for _, slot in ipairs(slots) do
             local key, name = unpack(slot)
@@ -438,6 +479,7 @@ function ns.ToggleDungeonLootCatalog()
     end
     settings.spec = nil
     if type(settings.slots) ~= "table" then settings.slots = {} end
+    if type(settings.favorites) ~= "table" then settings.favorites = {} end
     pendingSlots = {}
     entries = ReadCatalog(journal)
     if not window then CreateWindow() end

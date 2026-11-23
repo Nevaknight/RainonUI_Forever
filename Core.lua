@@ -170,6 +170,7 @@ end)
 ns.On("PLAYER_LOGIN", CreateMinimapButton)
 
 SLASH_RAINONUIFOREVER1 = "/rsf"
+SLASH_RAINONUIFOREVER2 = "/rainon"
 SlashCmdList.RAINONUIFOREVER = function(msg)
     ns.ToggleOptions(msg == "rest" and "characters" or nil)
 end
