@@ -1,5 +1,13 @@
 /LocalData.lua
+/Crates.lua
+/CrateData.lua
 /Junk.lua
+/Archive/
+/Mooncloth.lua
+/WaylaidTest.lua
+/WaylaidTestData.lua
+/BoatRoutes.lua
+/DungeonLootPreview.lua
 /.claude/
 /.codex/
 /.agents/

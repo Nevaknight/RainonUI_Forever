@@ -11,7 +11,19 @@ function ns.ProjectRest(snapshot, now)
     local cap = math.max(snapshot.xp, math.floor(snapshot.maxXP * BASE_CAP * factor))
     local perSecond = snapshot.maxXP * BASE_RATE * factor * (snapshot.resting and 1 or 0.25)
     local xp = math.min(cap, snapshot.xp + math.max(0, now - snapshot.at) * perSecond)
-    return math.floor(xp), cap, math.max(0, (cap - xp) / perSecond)
+    return math.floor(xp + 0.0000001), cap, math.max(0, (cap - xp) / perSecond),
+        snapshot.at + math.max(0, (cap - snapshot.xp) / perSecond)
+end
+
+local function IsMaxLevel(level)
+    local maxLevel = GetMaxPlayerLevel and ns.Number(GetMaxPlayerLevel()) or 60
+    level = ns.Number(level)
+    return level ~= nil and level >= maxLevel
+end
+
+local function UpdateKnownLevel(character, level)
+    level = ns.Number(level)
+    if level and level > (ns.Number(character.level) or 0) then character.level = level end
 end
 
 local function NameKey(name, realm)
@@ -37,23 +49,22 @@ local function AddNamedCharacter(name, realm, level)
     for _, character in pairs(roster) do
         if character.name == name and (not realm or not character.realm or realm == character.realm) then
             character.realm = character.realm or realm
-            character.level = character.level or level
+            UpdateKnownLevel(character, level)
             return
         end
     end
-    roster[NameKey(name, realm)] = { name = name, realm = realm, level = level }
+    roster[NameKey(name, realm)] = { name = name, realm = realm, level = ns.Number(level) }
 end
 
 local function MergeKnownCharacters()
     for guid, character in pairs(ns.db.characters or {}) do
-        if not ns.db.restCharacters[guid] then
-            RememberCharacter(guid, character.name, character.realm, character.level)
-        end
+        local known = ns.db.restCharacters[guid] or RememberCharacter(guid, character.name, character.realm)
+        if known then UpdateKnownLevel(known, character.level) end
     end
     for guid, snapshot in pairs(ns.db.rest) do
         local character = ns.db.restCharacters[guid] or RememberCharacter(guid, snapshot.name, snapshot.realm, snapshot.level)
         if character then
-            character.level = character.level or snapshot.level
+            UpdateKnownLevel(character, snapshot.level)
             if character.wellRested == nil then character.wellRested = snapshot.wellRested end
         end
     end
@@ -85,10 +96,8 @@ local function Update(loggingOut)
     local previous = ns.db.rest[key]
     if character.wellRested == nil and previous then character.wellRested = previous.wellRested end
 
-    local maxLevel = (GetMaxPlayerLevel and GetMaxPlayerLevel()) or 60
-    character.atMaxLevel = level >= maxLevel
     if not ns.Enabled("rest") or character.paused or character.removed then return end
-    if character.atMaxLevel then
+    if IsMaxLevel(level) then
         ns.db.rest[key] = nil
         return
     end
@@ -148,7 +157,7 @@ local function MakeRestRow(content, index, bookText)
     row.wellRested:SetSize(22, 22)
     row.wellRested:SetPoint("LEFT", row.level, "RIGHT", 6, 0)
     row.wellRested:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         GameTooltip:SetText("Хороший отдых")
         GameTooltip:AddLine("У этого персонажа вложено 5/5 очков наследия в «Хороший отдых».", 1, 1, 1, true)
         GameTooltip:Show()
@@ -188,13 +197,21 @@ local function MakeRestRow(content, index, bookText)
 
     row.status = bookText(row, "SystemFont_Med1", "")
     row.status:SetPoint("TOPLEFT", 0, -43)
+    row:SetMouseMotionEnabled(true)
+    row:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        GameTooltip:SetText("Прогноз отдыха")
+        GameTooltip:AddLine("Количество при входе берётся из игры. Дата рассчитана по последнему замеру, месту отдыха и галочке таланта 5/5. Изменения вне игры и бонусы лагеря могут изменить прогноз.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function() GameTooltip:Hide() end)
     return row
 end
 
-local function CharacterEntries(includeRemoved)
+local function CharacterEntries()
     local entries = {}
     for guid, character in pairs(ns.db.restCharacters) do
-        if includeRemoved or not character.removed then
+        if not character.removed and not IsMaxLevel(character.level) then
             local name = character.name
             if character.realm and character.realm ~= "" then
                 name = ("%s (%s)"):format(name, character.realm)
@@ -216,55 +233,34 @@ local function AddCharacterDropdown(page)
     dropdown:SetWidth(194)
     dropdown:SetPoint("TOPRIGHT", -4, -1)
     dropdown:SetupMenu(function(_, menu)
-        local entries = CharacterEntries(true)
+        local entries = CharacterEntries()
         if #entries == 0 then
             menu:CreateButton("Нет персонажей"):SetEnabled(false)
             return
         end
         table.sort(entries, ByName)
 
-        local removed = {}
-        local visibleCount = 0
         for _, entry in ipairs(entries) do
             local character, guid = entry.character, entry.guid
-            if character.removed then
-                removed[#removed + 1] = entry
-            else
-                visibleCount = visibleCount + 1
-                local submenu = menu:CreateButton(entry.name)
-                local tracking = submenu:CreateCheckbox("Отслеживать отдых", function()
-                    return not character.paused
-                end, function()
-                    character.paused = not character.paused or nil
-                    if guid == key and not character.paused then Update() end
-                    refreshPage()
-                    return MenuResponse.Refresh
-                end)
-                tracking:SetSelectionIgnored()
-                submenu:CreateButton("Удалить из списка", function()
-                    character.removed = true
-                    refreshPage()
-                    return MenuResponse.CloseAll
-                end)
-            end
+            local submenu = menu:CreateButton(entry.name)
+            local tracking = submenu:CreateCheckbox("Отслеживать отдых", function()
+                return not character.paused
+            end, function()
+                character.paused = not character.paused or nil
+                if guid == key and not character.paused then Update() end
+                refreshPage()
+                return MenuResponse.Refresh
+            end)
+            tracking:SetSelectionIgnored()
+            submenu:CreateButton("Удалить из списка", function()
+                character.removed = true
+                refreshPage()
+                return MenuResponse.CloseAll
+            end)
         end
 
         local maxRows = 12
-        if #removed > 0 then
-            local submenu = menu:CreateButton("Удалённые из списка")
-            if #removed > maxRows then submenu:SetScrollMode(maxRows * 20) end
-            for _, entry in ipairs(removed) do
-                local character, guid = entry.character, entry.guid
-                submenu:CreateButton("Вернуть: " .. entry.name, function()
-                    character.removed = nil
-                    if guid == key then Update() end
-                    refreshPage()
-                    return MenuResponse.CloseAll
-                end)
-            end
-            visibleCount = visibleCount + 1
-        end
-        if visibleCount > maxRows then menu:SetScrollMode(maxRows * 20) end
+        if #entries > maxRows then menu:SetScrollMode(maxRows * 20) end
     end)
 end
 
@@ -291,13 +287,13 @@ function ns.BuildRestPage(page, bookText, top)
         if not page:IsVisible() then return end
         local tracking = ns.Enabled("rest")
         local now = GetServerTime()
-        local entries = CharacterEntries(false)
+        local entries = CharacterEntries()
         for _, entry in ipairs(entries) do
             local character = entry.character
             local snapshot = ns.db.rest[entry.guid]
-            entry.showBar = tracking and not character.paused and not character.atMaxLevel
+            entry.showBar = tracking and not character.paused
             if entry.showBar and snapshot and snapshot.level == character.level then
-                entry.xp, entry.cap, entry.seconds = ns.ProjectRest(snapshot, entry.guid == key and snapshot.at or now)
+                entry.xp, entry.cap, entry.seconds, entry.fullAt = ns.ProjectRest(snapshot, entry.guid == key and snapshot.at or now)
             end
         end
         table.sort(entries, function(a, b)
@@ -333,16 +329,12 @@ function ns.BuildRestPage(page, bookText, top)
                 row.amount:SetFormattedText("%s / %s опыта", BreakUpLargeNumbers(xp), BreakUpLargeNumbers(cap))
                 row.bar:SetMinMaxValues(0, cap)
                 row.bar:SetValue(xp)
-                local status = seconds > 0 and ("До максимума: около %d ч."):format(math.ceil(seconds / 3600))
-                    or "Отдых накоплен"
-                row.status:SetText(entry.guid == key and status or ("Оценка вне игры. " .. status))
+                row.status:SetText("Полный отдых: " .. date("%d:%m:%Y", math.ceil(entry.fullAt)))
             else
                 row.bar:SetMinMaxValues(0, 1)
                 row.bar:SetValue(0)
                 if character.paused then
                     row.status:SetText("Отслеживание выключено")
-                elseif character.atMaxLevel then
-                    row.status:SetText("Максимальный уровень")
                 else
                     row.status:SetText("Первый замер при входе на персонажа")
                 end
@@ -372,6 +364,7 @@ end
 
 ns.AddSetting("rest", "Отслеживать отдых", Refresh)
 ns.On("PLAYER_LOGOUT", function() Update(true) end)
+ns.On("PLAYER_LEVEL_UP", function() C_Timer.After(0, Refresh) end)
 for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_UPDATE_RESTING", "UPDATE_EXHAUSTION", "PLAYER_XP_UPDATE" }) do
     ns.On(event, Refresh)
 end

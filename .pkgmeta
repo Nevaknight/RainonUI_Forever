@@ -4,8 +4,16 @@ manual-changelog:
   filename: Changelog.md
   markup-type: markdown
 ignore:
+  - CrateData.lua
+  - Crates.lua
   - LocalData.lua
   - Junk.lua
+  - Archive
+  - Mooncloth.lua
+  - WaylaidTest.lua
+  - WaylaidTestData.lua
+  - BoatRoutes.lua
+  - DungeonLootPreview.lua
   - AGENTS.md
   - .gitignore
   - .gitattributes

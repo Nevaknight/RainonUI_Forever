@@ -31,8 +31,8 @@ end
 
 local settings = {}
 local extraOptions = {}
-function ns.AddSetting(key, label, changed, optIn, tab)
-    settings[#settings + 1] = { key = key, label = label, changed = changed, optIn = optIn, tab = tab }
+function ns.AddSetting(key, label, changed, optIn, tab, style)
+    settings[#settings + 1] = { key = key, label = label, changed = changed, optIn = optIn, tab = tab, style = style }
 end
 
 function ns.AddOptions(builder)
@@ -71,7 +71,7 @@ local function CreateMinimapButton()
     button:SetSize(31, 31)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel(Minimap:GetFrameLevel() + 8)
-    button:RegisterForClicks("LeftButtonUp")
+    button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:RegisterForDrag("LeftButton")
     button:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
@@ -110,7 +110,23 @@ local function CreateMinimapButton()
         Place()
     end
 
-    button:SetScript("OnClick", function() ns.ToggleOptions() end)
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton ~= "RightButton" then
+            if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") and IsShiftKeyDown() then
+                if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+                ns.ToggleDungeonLootCatalog()
+            else
+                ns.ToggleOptions()
+            end
+            return
+        end
+        if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        if ns.OpenLootTests and IsAltKeyDown() then
+            ns.OpenLootTests()
+        elseif ns.OpenCurrentDungeonLoot then
+            ns.OpenCurrentDungeonLoot()
+        end
+    end)
     button:SetScript("OnDragStart", function(self)
         GameTooltip:Hide()
         self:SetScript("OnUpdate", FollowCursor)
@@ -119,9 +135,14 @@ local function CreateMinimapButton()
     button:SetScript("OnDragStop", StopDragging)
     button:SetScript("OnHide", StopDragging)
     button:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         GameTooltip:SetText("RainonUI — Forever")
         GameTooltip:AddLine("ЛКМ — открыть настройки.", 1, 1, 1)
+        if ns.OpenCurrentDungeonLoot then GameTooltip:AddLine("ПКМ - добыча текущего подземелья.", 1, 1, 1) end
+        if ns.OpenLootTests then GameTooltip:AddLine("Alt + ПКМ - тестовые окна.", 1, 1, 1) end
+        if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") then
+            GameTooltip:AddLine("Shift + ЛКМ — добыча всех подземелий.", 1, 1, 1)
+        end
         GameTooltip:AddLine("Перетащи кнопку, чтобы изменить её положение.", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
@@ -133,6 +154,7 @@ end
 
 ns.On("ADDON_LOADED", function(name)
     if name ~= addon then return end
+    ns.isNewInstall = RainonUIForeverDB == nil
     RainonUIForeverDB = RainonUIForeverDB or {}
     ns.db = RainonUIForeverDB
     ns.db.features = ns.db.features or {}
