@@ -23,3 +23,15 @@ ignore:
   - CLAUDE.md
   - _to_delete
   - README.md
+  - WTF
+  - SavedVariables
+  - RainonUI.lua
+  - RainonUI_Forever.lua
+  - session-notes.md
+  - _FIX_IT_ADDON.md
+  - _WIKI
+  - _INDEX
+  - Backup
+  - Backups
+  - Media/AGENTS.md
+  - Media/CLAUDE.md
