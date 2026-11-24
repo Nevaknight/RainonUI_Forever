@@ -2,7 +2,7 @@
 ## Title: RainonUI_Forever
 ## Notes: RainonUI для World of Warcraft: Forever
 ## Author: Rainon
-## Version: 0.3.1
+## Version: 0.4.0
 ## IconTexture: Interface\AddOns\RainonUI_Forever\Media\logo
 ## SavedVariables: RainonUIForeverDB
 ## OptionalDeps: Auctionator, Baganator, ForeverDungeonJournal, Questie, Syndicator
@@ -10,6 +10,7 @@
 Core.lua
 Options.lua
 UpdateNotice.lua
+FlightArrival.lua
 Reload.lua
 Rest.lua
 Stats.lua
@@ -28,6 +29,8 @@ WaylaidTestData.lua
 Crates.lua
 WaylaidTest.lua
 LocalTests.lua
+QuestNavigationTest.lua
+QuestNavigationTest.xml
 Junk.lua
 BoatRoutes.lua
 #@end-do-not-package@

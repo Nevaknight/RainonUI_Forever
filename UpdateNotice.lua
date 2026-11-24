@@ -2,10 +2,8 @@ local _, ns = ...
 local feature = "updateNotice"
 
 -- Use the release version as the ID and leave sections empty for a release without news.
-local announcementID = "0.2.0"
-local sections = {
-    { title = "Общие", text = "Очень много всего добавил, наслаждайтесь кому будет полезно, если будут ошибки пишите. Должно работать на ру и еу клиенте без проблем." },
-}
+local announcementID = "0.4.0"
+local sections = {}
 local window, checked
 local function VisibleSections()
     local visible = {}
@@ -18,18 +16,18 @@ local function VisibleSections()
     return visible
 end
 
-function ns.ShowUpdateNotice()
-    if not window then
-        local visible = VisibleSections()
-        if #visible == 0 then return false end
-        window = ns.BuildUpdateNotice(visible)
-    end
+function ns.ShowUpdateNotice(preview)
+    local visible = VisibleSections()
+    local hasNews = #visible > 0
+    if not hasNews and not preview then return false end
+    window = window or ns.BuildUpdateNotice(visible, feature)
+    window:RefreshSetting()
     window:Show()
-    return true
+    return hasNews
 end
 
 ns.AddSetting(feature, "Новые функции", function()
-    if window and not ns.Enabled(feature) then window:Hide() end
+    if window then window:RefreshSetting() end
 end)
 
 ns.On("PLAYER_ENTERING_WORLD", function()

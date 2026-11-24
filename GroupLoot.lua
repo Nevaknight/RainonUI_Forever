@@ -4,7 +4,7 @@ local history = C_LootHistory
 local rollStates = Enum.EncounterLootDropRollState
 local rollTypes = Enum.LootRollType
 
-ns.LootQualityNames = { [2] = "Необычное", [3] = "Редкое" }
+ns.LootQualityNames = { [2] = "Необычное", [3] = "Редкое", [4] = "Эпическое" }
 ns.AutoGreedIgnoreOptions = {
     { "recipes", "Рецепты", "Interface\\Icons\\INV_Scroll_03" },
     { 20520, "Dark Rune", 136192 },
@@ -22,37 +22,161 @@ function ns.ToggleAutoGreedIgnored(key)
     ns.db.autoGreedIgnored[key] = not ns.IsAutoGreedIgnored(key) or nil
 end
 
+function ns.MaxLootQuality(feature)
+    return feature == "groupNeed" and 4 or 3
+end
+
 function ns.IsLootQualitySelected(feature, quality)
     local selected = ns.db and ns.db[feature .. "Qualities"]
-    return ns.LootQualityNames[quality] ~= nil and type(selected) == "table" and selected[quality] == true
+    return ns.LootQualityNames[quality] ~= nil and quality <= ns.MaxLootQuality(feature)
+        and type(selected) == "table" and selected[quality] == true
 end
 
 function ns.HasLootQualitySelected(feature)
-    return ns.IsLootQualitySelected(feature, 2) or ns.IsLootQualitySelected(feature, 3)
+    for quality = 2, ns.MaxLootQuality(feature) do
+        if ns.IsLootQualitySelected(feature, quality) then return true end
+    end
+    return false
 end
 
 local function SafeString(value)
     if type(value) == "string" and not (issecretvalue and issecretvalue(value)) then return value end
 end
 
-local roleIcons = {
-    TANK = "|A:roleicon-tiny-tank:12:12|a ",
-    HEALER = "|A:roleicon-tiny-healer:12:12|a ",
-    DAMAGER = "|A:roleicon-tiny-dps:12:12|a ",
+local winnerPrefix = "Победитель: "
+local voteIconSize = 12
+ns.GroupLootPreviewNames = {
+    "Aurelianwind Dawnsentinel",
+    "Seraphinmoon Silverwillow",
+    "Eldermystara Frostwhisper",
+    "Nightvaleron Shadowdagger",
+    "Sylvanthorne Stormfeather",
 }
 
-local function RoleIcon(guid)
+local roleIcons = {
+    TANK = "|A:roleicon-tiny-tank:12:12|a",
+    HEALER = "|A:roleicon-tiny-healer:12:12|a",
+    DAMAGER = "|A:roleicon-tiny-dps:12:12|a",
+}
+
+local function AssignedRole(info)
+    local guid = SafeString(info.playerGUID)
     local unit = guid and UnitTokenFromGUID and SafeString(UnitTokenFromGUID(guid))
-    local role = unit and UnitGroupRolesAssigned and SafeString(UnitGroupRolesAssigned(unit))
-    return roleIcons[role] or ""
+    return unit and UnitGroupRolesAssigned and SafeString(UnitGroupRolesAssigned(unit))
 end
 
-local panel, content
+local function VoterIcon(role, class)
+    if roleIcons[role] then return roleIcons[role] end
+    if class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class] then
+        return ("|A:classicon-%s:12:12|a"):format(class:lower())
+    end
+end
+
+local function VoterName(info, name, getRole)
+    local class = SafeString(info.playerClass)
+    local color = RAID_CLASS_COLORS and class and RAID_CLASS_COLORS[class]
+    local hex = color and color.colorStr
+    name = name:gsub("|", "||")
+    if hex then name = "|c" .. hex .. name .. "|r" end
+    local icon = VoterIcon(getRole(info), class)
+    return icon and (icon .. " " .. name) or name
+end
+
+function ns.BuildGroupLootVoteText(rollInfos, getRole, winner)
+    getRole = getRole or AssignedRole
+    local names, pending, voted = {}, {}, 0
+    local winnerName = winner and SafeString(winner.playerName)
+    local winnerGUID = winner and SafeString(winner.playerGUID)
+    local winnerListed = false
+    for _, info in ipairs(rollInfos) do
+        local state = ns.Number(info.state)
+        if state == rollStates.NoRoll then
+            pending[#pending + 1] = VoterIcon(getRole(info), SafeString(info.playerClass)) or "|T134400:12:12|t"
+        elseif state then
+            voted = voted + 1
+            if state == rollStates.NeedMainSpec or state == rollStates.NeedOffSpec then
+                local name = SafeString(info.playerName)
+                if name and name ~= "" then
+                    names[#names + 1] = { name = name, info = info }
+                    winnerListed = winnerListed or name == winnerName
+                        or (winnerGUID and SafeString(info.playerGUID) == winnerGUID)
+                end
+            end
+        end
+    end
+    if winnerName and winnerName ~= "" and not winnerListed then
+        names[#names + 1] = { name = winnerName, info = winner }
+    end
+    table.sort(names, function(a, b) return a.name < b.name end)
+    for index, voter in ipairs(names) do
+        names[index] = VoterName(voter.info, voter.name, getRole)
+    end
+    local header
+    if winnerName and winnerName ~= "" then
+        header = winnerPrefix .. VoterName(winner, winnerName, getRole)
+    else
+        header = ("Голосование: %d/%d"):format(voted, #rollInfos)
+        if #pending > 0 then header = header .. "  " .. table.concat(pending, " ") end
+    end
+    return #names > 0 and header .. "\n" .. table.concat(names, "\n") or header
+end
+
+local panel, scroll, content, grow, shrink
 local rows, drops, updates = {}, {}, {}
+local DrawNeed
 local renderPending, preview
-local rowHeight, contentWidth = 42, 288
-local resultDuration = 3
-local minPanelHeight = rowHeight + 38
+local historyGeneration, entryOrder = 0, 0
+local rowCount = 0
+local rowHeight = 42
+local topInset, bottomInset = 30, 8
+local panelInset, scrollBarInset, scrollBarGap = 12, 30, 4
+local panelPadding = topInset + bottomInset
+local textInset, textGap = 36, 3
+local contentWidth, ballotWidth, textWidth, ballotSize, ballotFlags
+local maxItemNameChars = #ns.GroupLootPreviewNames[1]
+local itemNameEllipsis = "..."
+local minVisibleRows, maxVisibleRows, resultDuration = 2, 10, 5
+local maxRetainedDrops = 20
+local minPanelHeight = rowHeight + panelPadding
+
+local function KeepResults()
+    return ns.db.groupNeedKeepOpen == true
+end
+
+function ns.GetGroupNeedScale()
+    local percent = ns.Number(ns.db.groupNeedScalePercent) or 100
+    return math.max(100, math.min(160, math.floor(percent / 10 + 0.5) * 10))
+end
+
+local function VisibleRows()
+    local count = ns.Number(ns.db.groupNeedVisibleRows) or maxVisibleRows
+    return math.max(minVisibleRows, math.min(maxVisibleRows, math.floor(count)))
+end
+
+local function PruneExpired()
+    local now = history and history.GetLootHistoryTime and ns.Number(history.GetLootHistoryTime())
+    if not now then return end
+    for key, entry in pairs(drops) do
+        if entry.expires <= now then drops[key] = nil end
+    end
+end
+
+local function TrimRetainedResults(entries)
+    local limit = maxRetainedDrops + (preview and #preview or 0)
+    if not KeepResults() or #entries <= limit then return end
+    local now = ns.Number(history.GetLootHistoryTime())
+    for index = #entries, limit + 1, -1 do
+        local entry = entries[index]
+        if now and entry.expires <= now then
+            drops[entry.key] = nil
+        else
+            -- Ignore further votes for an evicted roll until its existing timer expires.
+            entry.dismissed = true
+            entry.link, entry.votes = nil, nil
+        end
+        entries[index] = nil
+    end
+end
 
 local function BorderHeight(top, bottom)
     if not top or not bottom then return 0 end
@@ -61,9 +185,67 @@ local function BorderHeight(top, bottom)
     return top:GetHeight() + bottom:GetHeight() - (topOffset or 0) + (bottomOffset or 0) + 1
 end
 
+local function PositionPanel()
+    local scale = panel:GetScale()
+    local position = ns.db.groupNeedPosition
+    panel:ClearAllPoints()
+    if position then
+        panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.x / scale, position.y / scale)
+    else
+        panel:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -80 / scale, -140 / scale)
+    end
+end
+
+local function UpdateScrollRange(range)
+    scroll.ScrollBar:SetShown(range > 0)
+    if scroll:GetVerticalScroll() > range then scroll:SetVerticalScroll(range) end
+end
+
+local function UpdatePanelHeight()
+    if rowCount == 0 then return end
+    local limit = VisibleRows()
+    local screenHeight = (UIParent:GetHeight() - 24) / panel:GetScale()
+    local wantedHeight = rows[math.min(limit, rowCount)].bottom + panelPadding
+    local height = math.max(minPanelHeight, math.min(wantedHeight, screenHeight))
+    if panel:GetHeight() ~= height then panel:SetHeight(height) end
+    grow:SetEnabled(limit < maxVisibleRows)
+    shrink:SetEnabled(limit > minVisibleRows)
+    scroll:UpdateScrollChildRect()
+    UpdateScrollRange(scroll:GetVerticalScrollRange())
+end
+
+local function ApplyScale()
+    panel:SetScale(ns.GetGroupNeedScale() / 100)
+    PositionPanel()
+end
+
+function ns.SetGroupNeedScale(percent)
+    ns.db.groupNeedScalePercent = percent
+    if panel then
+        ApplyScale()
+        UpdatePanelHeight()
+    end
+end
+
 local function CreatePanel()
     local close
-    panel, close = ns.CreateLootPanel("RainonUIForeverGroupLoot", "Кто выбрал «Нужно»", 312, minPanelHeight)
+    local horizontalMargins = panelInset + textInset + scrollBarInset
+    panel, close = ns.CreateLootPanel("RainonUIForeverGroupLoot", "", horizontalMargins, minPanelHeight)
+    local measure = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    local _, baseSize, flags = measure:GetFont()
+    ballotSize, ballotFlags = baseSize + 0.5, flags
+    measure:SetFont(ns.CYRILLIC_FONT, ballotSize, ballotFlags)
+    ballotWidth = 0
+    for _, name in ipairs(ns.GroupLootPreviewNames) do
+        local label = winnerPrefix .. roleIcons.DAMAGER .. " " .. name
+        ballotWidth = math.max(ballotWidth, measure:GetUnboundedStringWidthForText(label))
+    end
+    -- Measure between letters so the font does not discard trailing spaces.
+    local rightPadding = measure:GetUnboundedStringWidthForText("M  M") - measure:GetUnboundedStringWidthForText("MM")
+    textWidth = math.ceil(ballotWidth + rightPadding)
+    contentWidth = textInset + textWidth
+    panel:SetWidth(horizontalMargins + textWidth)
+
     local border = panel.NineSlice
     if border then
         -- Keep the original corner atlases and leave room for both side edges.
@@ -71,19 +253,25 @@ local function CreatePanel()
             BorderHeight(border.TopLeftCorner, border.BottomLeftCorner),
             BorderHeight(border.TopRightCorner, border.BottomRightCorner))
     end
-    local position = ns.db.groupNeedPosition
-    if position then
-        panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.x, position.y)
-    else
-        panel:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -80, -140)
-    end
+    ApplyScale()
     panel:SetMovable(true)
     close:SetScript("OnClick", function()
         for _, entry in pairs(drops) do entry.dismissed = true end
+        PruneExpired()
         preview = nil
+        scroll:SetVerticalScroll(0)
         panel:Hide()
     end)
+    local function Resize(step)
+        ns.db.groupNeedVisibleRows = math.max(minVisibleRows, math.min(maxVisibleRows, VisibleRows() + step))
+        UpdatePanelHeight()
+    end
+    grow = ns.CreateLootSizeButton(panel, close, "RedButton-Expand", "RedButton-Expand-Disabled", function() Resize(1) end)
+    shrink = ns.CreateLootSizeButton(panel, grow, "RedButton-Condense", "RedButton-Condense-disabled", function() Resize(-1) end)
     local title = panel.TitleContainer
+    title:ClearAllPoints()
+    title:SetPoint("TOPLEFT", panel, "TOPLEFT", panelInset, -1)
+    title:SetPoint("TOPRIGHT", shrink, "TOPLEFT", -4, -1)
     title:EnableMouse(true)
     title:RegisterForDrag("LeftButton")
     title:SetScript("OnDragStart", function() panel:StartMoving() end)
@@ -91,17 +279,33 @@ local function CreatePanel()
         panel:StopMovingOrSizing()
         local left, top = panel:GetLeft(), panel:GetTop()
         if left and top then
-            local x, y = left - (UIParent:GetLeft() or 0), top - (UIParent:GetBottom() or 0)
-            panel:ClearAllPoints()
-            panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
-            ns.db.groupNeedPosition = { x = x, y = y }
+            local scale = panel:GetScale()
+            ns.db.groupNeedPosition = {
+                x = left * scale - (UIParent:GetLeft() or 0),
+                y = top * scale - (UIParent:GetBottom() or 0),
+            }
+            PositionPanel()
         end
     end)
     panel:HookScript("OnHide", function() panel:StopMovingOrSizing() end)
 
-    content = CreateFrame("Frame", nil, panel)
-    content:SetPoint("TOPLEFT", 12, -30)
+    scroll = CreateFrame("ScrollFrame", nil, panel, "ScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", panelInset, -topInset)
+    scroll:SetPoint("BOTTOMRIGHT", -scrollBarInset, bottomInset)
+    local bar = scroll.ScrollBar
+    bar:ClearAllPoints()
+    bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", scrollBarGap, 0)
+    bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", scrollBarGap, 0)
+    content = CreateFrame("Frame", nil, scroll)
     content:SetSize(contentWidth, 1)
+    scroll:SetScrollChild(content)
+    scroll:HookScript("OnScrollRangeChanged", function(_, _, range) UpdateScrollRange(range) end)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local offset = self:GetVerticalScroll() - delta * 50
+        self:SetVerticalScroll(math.max(0, math.min(offset, self:GetVerticalScrollRange())))
+    end)
+    UIParent:HookScript("OnSizeChanged", UpdatePanelHeight)
 end
 
 local function CreateRow()
@@ -112,6 +316,7 @@ local function CreateRow()
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetHyperlink(self.link)
         GameTooltip:AddLine(self.votes, 1, 1, 1, true)
+        ns.UseCyrillicTooltipFont(GameTooltip)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function(self)
@@ -125,19 +330,49 @@ local function CreateRow()
     row.icon:SetPoint("TOPLEFT", 0, -2)
     row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    row.name:SetPoint("TOPLEFT", 36, -2)
-    row.name:SetWidth(contentWidth - 36)
+    row.name:SetPoint("TOPLEFT", textInset, -2)
+    row.name:SetWidth(textWidth)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
+    row.name:SetMaxLines(1)
+    local _, nameSize, nameFlags = row.name:GetFont()
+    row.name:SetFont(ns.CYRILLIC_FONT, nameSize, nameFlags)
+    row.ballot = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.ballot:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -textGap)
+    row.ballot:SetWidth(textWidth)
+    row.ballot:SetJustifyH("LEFT")
+    row.ballot:SetWordWrap(true)
     row.voters = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.voters:SetPoint("TOPLEFT", 36, -19)
-    row.voters:SetWidth(contentWidth - 36)
+    row.voters:SetPoint("TOPLEFT", row.ballot, "BOTTOMLEFT", 0, -textGap)
+    row.voters:SetWidth(textWidth)
     row.voters:SetJustifyH("LEFT")
     row.voters:SetWordWrap(true)
+    row.ballot:SetFont(ns.CYRILLIC_FONT, ballotSize, ballotFlags)
+    row.voters:SetFont(ns.CYRILLIC_FONT, ballotSize, ballotFlags)
+    row.divider = row:CreateTexture(nil, "ARTWORK")
+    row.divider:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
+    row.divider:SetHeight(6)
+    row.divider:SetPoint("BOTTOMLEFT")
+    row.divider:SetPoint("BOTTOMRIGHT")
     return row
 end
 
-local function DrawNeed()
+local function DisplayItemName(link)
+    return (link:gsub("(|h)%[(.-)%](|h)", function(open, name, close)
+        local count, prefixEnd = 0, 0
+        for nextByte in name:gmatch("[^\128-\191][\128-\191]*()") do
+            count = count + 1
+            if count > maxItemNameChars then
+                name = name:sub(1, prefixEnd):gsub("%s+$", "") .. itemNameEllipsis
+                break
+            end
+            if count <= maxItemNameChars - #itemNameEllipsis then prefixEnd = nextByte - 1 end
+        end
+        return open .. name .. close
+    end, 1))
+end
+
+DrawNeed = function(resetScroll)
     local entries = {}
     for key, entry in pairs(drops) do
         if ns.Enabled("groupNeed") and ns.IsLootQualitySelected("groupNeed", entry.quality) then
@@ -146,46 +381,94 @@ local function DrawNeed()
             drops[key] = nil
         end
     end
-    if preview then entries[#entries + 1] = preview end
+    for _, sample in ipairs(preview or {}) do entries[#entries + 1] = sample end
     if #entries == 0 then
-        if panel then panel:Hide() end
+        rowCount = 0
+        if panel then
+            scroll:SetVerticalScroll(0)
+            panel:Hide()
+        end
         return
     end
     table.sort(entries, function(a, b)
         if a.start ~= b.start then return a.start > b.start end
-        return a.key < b.key
+        return a.order > b.order
     end)
+    TrimRetainedResults(entries)
     if not panel then CreatePanel() end
     local height = 0
     for index, entry in ipairs(entries) do
         local row = rows[index] or CreateRow()
         rows[index] = row
-        row.link, row.votes = entry.link, entry.votes
-        row.name:SetText(entry.link)
-        row.voters:SetText(entry.votes)
-        local itemID = tonumber(entry.link:match("item:(%d+)"))
-        row.icon:SetTexture(itemID and C_Item.GetItemIconByID(itemID) or 134400)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", 0, -height)
-        local entryHeight = math.max(rowHeight, 24 + row.voters:GetStringHeight())
-        row:SetHeight(entryHeight)
+        if row.link ~= entry.link then
+            if GameTooltip:IsOwned(row) then GameTooltip:Hide() end
+            row.link = entry.link
+            row.name:SetText(DisplayItemName(entry.link))
+            row.hasIcon = nil
+        end
+        if not row.hasIcon then
+            local itemID = tonumber(row.link:match("item:(%d+)"))
+            local icon = itemID and C_Item.GetItemIconByID(itemID)
+            row.hasIcon = icon ~= nil
+            row.icon:SetTexture(icon or 134400)
+        end
+        if row.votes ~= entry.votes or not row.bottom then
+            row.votes = entry.votes
+            local ballot, voters = entry.votes:match("^([^\n]*)\n?(.*)$")
+            local isWinner = ballot:sub(1, #winnerPrefix) == winnerPrefix
+            row.ballot:SetWordWrap(not isWinner)
+            row.ballot:SetFont(ns.CYRILLIC_FONT, ballotSize, ballotFlags)
+            if isWinner then
+                local width = row.ballot:GetUnboundedStringWidthForText(ballot)
+                if width > ballotWidth then
+                    local fit = (ballotWidth - voteIconSize) / (width - voteIconSize)
+                    row.ballot:SetFont(ns.CYRILLIC_FONT, ballotSize * fit, ballotFlags)
+                end
+            end
+            row.ballot:SetText(ballot)
+            row.voters:SetText(voters)
+            row.voters:SetShown(voters ~= "")
+        end
+        local textHeight = row.name:GetStringHeight() + textGap + row.ballot:GetStringHeight()
+        if row.voters:IsShown() then textHeight = textHeight + textGap + row.voters:GetStringHeight() end
+        local entryHeight = math.max(rowHeight, textHeight + 10)
+        if row.top ~= height then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 0, -height)
+            row.top = height
+        end
+        if row:GetHeight() ~= entryHeight then row:SetHeight(entryHeight) end
         height = height + entryHeight
+        row.bottom = height
+        row.divider:SetShown(index < #entries)
         row:Show()
     end
     for index = #entries + 1, #rows do rows[index]:Hide() end
+    rowCount = #entries
     content:SetHeight(height)
-    panel:SetHeight(math.max(height + 38, minPanelHeight))
-    panel:Show()
+    if not panel:IsShown() then panel:Show() end
+    UpdatePanelHeight()
+    if resetScroll then scroll:SetVerticalScroll(0) end
 end
 
-function ns.ShowGroupLootSample(link, votes)
-    local sample = { link = link, votes = votes, key = "preview", start = math.huge }
+function ns.ShowGroupLootSample(links, votes)
+    if type(links) == "string" then links = { links } end
+    local sample = {}
+    for index, link in ipairs(links) do
+        sample[index] = {
+            link = link, votes = type(votes) == "table" and votes[index] or votes,
+            start = math.huge, order = -index,
+        }
+    end
     preview = sample
-    DrawNeed()
+    DrawNeed(true)
     C_Timer.After(resultDuration, function()
         if preview ~= sample then return end
-        preview = nil
-        DrawNeed()
+        sample.expired = true
+        if not KeepResults() then
+            preview = nil
+            DrawNeed()
+        end
     end)
 end
 
@@ -202,9 +485,11 @@ local function FindQuality(link)
 end
 
 local function UpdateDrop(encounterID, lootID, drop, now)
-    local key = encounterID .. ":" .. lootID
+    local key = historyGeneration .. ":" .. encounterID .. ":" .. lootID
     local old = drops[key]
+    if old and old.dismissed then return end
     local link = drop and SafeString(drop.itemHyperlink)
+    if not link and old and KeepResults() then return end
     local quality = old and old.link == link and old.quality or link and FindQuality(link)
     if not ns.IsLootQualitySelected("groupNeed", quality) then
         drops[key] = nil
@@ -213,49 +498,47 @@ local function UpdateDrop(encounterID, lootID, drop, now)
     local start, duration = ns.Number(drop.startTime), ns.Number(drop.duration)
     if not (start and duration and duration > 0) then return end
     local finished = drop.winner ~= nil or drop.allPassed == true
-    local expires = start + duration
-    -- Also show the result if the roll opened and closed in the same update batch.
+    local deadline = start + duration
+    -- Ignore old drops when history is replayed, but allow a roll that finished in the same batch.
+    if not old and (deadline <= now or (finished and now - start > 1)) then return end
+    local expires = deadline + resultDuration
     if finished then
-        if not old and (now - start > 1 or expires <= now) then return end
         expires = old and old.finished and old.expires or now + resultDuration
     end
-    if expires <= now then
+    if expires <= now and not (old and KeepResults()) then
         drops[key] = nil
         return
     end
-    local names, voted = {}, 0
-    local rollInfos = drop.rollInfos or {}
-    for _, info in ipairs(rollInfos) do
-        local state = ns.Number(info.state)
-        if state and state ~= rollStates.NoRoll then voted = voted + 1 end
-        if state == rollStates.NeedMainSpec or state == rollStates.NeedOffSpec then
-            local name = SafeString(info.playerName)
-            if name then
-                names[#names + 1] = { name = name, class = SafeString(info.playerClass), guid = SafeString(info.playerGUID) }
-            end
-        end
+    local entry = old
+    if not entry then
+        entryOrder = entryOrder + 1
+        entry = { key = key, order = entryOrder }
     end
-    table.sort(names, function(a, b) return a.name < b.name end)
-    for index, voter in ipairs(names) do
-        local color = RAID_CLASS_COLORS and voter.class and RAID_CLASS_COLORS[voter.class]
-        local hex = color and color.colorStr
-        local name = voter.name:gsub("|", "||")
-        if hex then name = "|c" .. hex .. name .. "|r" end
-        names[index] = RoleIcon(voter.guid) .. name
-    end
-    local entry = old or { key = key }
     entry.link, entry.quality, entry.start = link, quality, start
-    entry.votes = ("%d/%d  Нужно: %s"):format(voted, #rollInfos, #names > 0 and table.concat(names, ", ") or "-")
+    entry.votes = ns.BuildGroupLootVoteText(drop.rollInfos or {}, nil, drop.winner)
     entry.finished = finished
     drops[key] = entry
-    if entry.expires == expires then return end
-    entry.expires = expires
-    C_Timer.After(expires - now, function()
-        if drops[key] == entry and entry.expires == expires then
-            drops[key] = nil
-            DrawNeed()
+    if entry.expires ~= expires then
+        entry.expires = expires
+        if expires > now then
+            C_Timer.After(expires - now, function()
+                if drops[key] == entry and entry.expires == expires and (entry.dismissed or not KeepResults()) then
+                    drops[key] = nil
+                    DrawNeed()
+                end
+            end)
         end
-    end)
+    end
+    return not old
+end
+
+function ns.ToggleGroupNeedKeepOpen()
+    ns.db.groupNeedKeepOpen = not KeepResults() or nil
+    if not KeepResults() then
+        PruneExpired()
+        if preview and preview.expired then preview = nil end
+    end
+    DrawNeed()
 end
 
 local function RefreshNeed()
@@ -285,19 +568,20 @@ local function QueueHistory(encounterID, lootID)
         if not (ns.Enabled("groupNeed") and ns.HasLootQualitySelected("groupNeed")) then return end
         local now = ns.Number(history.GetLootHistoryTime())
         if not now then return end
+        local newEntry = false
         for id, changed in pairs(pending) do
             if changed == true then
                 for _, drop in ipairs(history.GetSortedDropsForEncounter(id) or {}) do
                     local loot = ns.Number(drop.lootListID) or ns.Number(drop.lootListKey)
-                    if loot then UpdateDrop(id, loot, drop, now) end
+                    if loot and UpdateDrop(id, loot, drop, now) then newEntry = true end
                 end
             else
                 for loot in pairs(changed) do
-                    UpdateDrop(id, loot, history.GetSortedInfoForDrop(id, loot), now)
+                    if UpdateDrop(id, loot, history.GetSortedInfoForDrop(id, loot), now) then newEntry = true end
                 end
             end
         end
-        DrawNeed()
+        DrawNeed(newEntry)
     end)
 end
 
@@ -313,7 +597,8 @@ if history and history.GetSortedInfoForDrop and history.GetSortedDropsForEncount
     end)
     ns.On("LOOT_HISTORY_CLEAR_HISTORY", function()
         wipe(updates)
-        wipe(drops)
+        historyGeneration = historyGeneration + 1
+        if not KeepResults() then wipe(drops) end
         DrawNeed()
     end)
 end

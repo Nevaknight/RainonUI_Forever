@@ -29,6 +29,33 @@ function ns.Number(value)
     return tonumber(value)
 end
 
+ns.CYRILLIC_FONT = "Fonts\\FRIZQT___CYR.TTF"
+
+local tooltipFonts = setmetatable({}, { __mode = "k" })
+
+local function RestoreTooltipFonts(tooltip)
+    local fonts = tooltipFonts[tooltip]
+    for line, font in pairs(fonts) do
+        line:SetFont(unpack(font))
+        fonts[line] = nil
+    end
+end
+
+function ns.UseCyrillicTooltipFont(tooltip, referenceFont)
+    local line = _G[tooltip:GetName() .. "TextLeft" .. tooltip:NumLines()]
+    if not line then return end
+    local fonts = tooltipFonts[tooltip]
+    if not fonts then
+        fonts = {}
+        tooltipFonts[tooltip] = fonts
+        tooltip:HookScript("OnTooltipCleared", RestoreTooltipFonts)
+    end
+    local font, size, flags = line:GetFont()
+    fonts[line] = fonts[line] or { font, size, flags }
+    if referenceFont then font, size, flags = referenceFont:GetFont() end
+    line:SetFont(ns.CYRILLIC_FONT, size, flags)
+end
+
 local settings = {}
 local extraOptions = {}
 function ns.AddSetting(key, label, changed, optIn, tab, style)
@@ -55,6 +82,14 @@ function ns.ToggleOptions(tab)
     else
         panel:SetShown(not panel:IsShown())
     end
+end
+
+function ns.RefreshOptions()
+    if panel and panel:IsShown() then panel:RefreshSettings() end
+end
+
+local function AddMinimapBinding(binding, description)
+    GameTooltip:AddDoubleLine(binding, description, 1 / 255, 176 / 255, 227 / 255, 251 / 255, 253 / 255, 254 / 255)
 end
 
 local function UpdateMinimapButton()
@@ -137,13 +172,13 @@ local function CreateMinimapButton()
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         GameTooltip:SetText("RainonUI — Forever")
-        GameTooltip:AddLine("ЛКМ — открыть настройки.", 1, 1, 1)
-        if ns.OpenCurrentDungeonLoot then GameTooltip:AddLine("ПКМ - добыча текущего подземелья.", 1, 1, 1) end
-        if ns.OpenLootTests then GameTooltip:AddLine("Alt + ПКМ - тестовые окна.", 1, 1, 1) end
+        AddMinimapBinding("ЛКМ", "Открыть настройки")
+        if ns.OpenCurrentDungeonLoot then AddMinimapBinding("ПКМ", "Добыча текущего подземелья") end
+        if ns.OpenLootTests then AddMinimapBinding("Alt + ПКМ", "Тестовые окна") end
         if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") then
-            GameTooltip:AddLine("Shift + ЛКМ — добыча всех подземелий.", 1, 1, 1)
+            AddMinimapBinding("Shift + ЛКМ", "Добыча всех подземелий")
         end
-        GameTooltip:AddLine("Перетащи кнопку, чтобы изменить её положение.", 0.8, 0.8, 0.8)
+        AddMinimapBinding("Перетаскивание", "Переместить значок")
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)

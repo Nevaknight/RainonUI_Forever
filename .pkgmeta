@@ -9,7 +9,8 @@ ignore:
   - LocalData.lua
   - Junk.lua
   - LocalTests.lua
-  - Media/Sounds/RainonUI_Attention.ogg
+  - QuestNavigationTest.lua
+  - QuestNavigationTest.xml
   - Archive
   - Mooncloth.lua
   - WaylaidTest.lua

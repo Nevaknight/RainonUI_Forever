@@ -10,7 +10,6 @@ local questionMark = 134400
 local tooltipNames = { "GameTooltip", "ItemRefTooltip", "ShoppingTooltip1", "ShoppingTooltip2",
     "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2" }
 local itemTooltips, marked = {}, setmetatable({}, { __mode = "k" })
-local tooltipFonts = setmetatable({}, { __mode = "k" })
 -- These two summoned sources are mentioned by the journal but have no loot rows.
 local stratholmeSmiths = {
     ["Stratholme: Living"] = { name = "Crimson Hammersmith", npcID = 11120, loot = { { 276404 } } },
@@ -53,21 +52,11 @@ end
 local function AddSpecLine(tooltip, spec, rank)
     tooltip:AddLine(("|T%d:20:20:0:0|t %s: Рейтинг %d"):format(specIcons[spec], specNames[spec], rank),
         244 / 255, 140 / 255, 186 / 255)
-    local line = _G[tooltip:GetName() .. "TextLeft" .. tooltip:NumLines()]
-    if not line then return end
-    local fonts = tooltipFonts[tooltip] or {}
-    tooltipFonts[tooltip] = fonts
-    fonts[line] = fonts[line] or { line:GetFont() }
-    local _, size, flags = entryFont:GetFont()
-    line:SetFont("Fonts\\FRIZQT___CYR.TTF", size, flags)
+    ns.UseCyrillicTooltipFont(tooltip, entryFont)
 end
 
 local function ClearRanks(tooltip)
     marked[tooltip] = nil
-    local fonts = tooltipFonts[tooltip]
-    if not fonts then return end
-    for line, font in pairs(fonts) do line:SetFont(unpack(font)) end
-    tooltipFonts[tooltip] = nil
 end
 
 local function AddRanks(tooltip, data)

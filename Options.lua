@@ -160,22 +160,53 @@ end
 
 local numberColors = { { "signed", "По знаку" }, { "stat", "Цвет характеристики" }, { "line", "Цвет строки" } }
 
-local function NumberOptions(page)
-    local label = BookText(page, "SystemFont_Med1", "Цвет чисел")
-    label:SetPoint("TOPLEFT", columnStep + 8, firstRow - rowStep - 4)
+local function SettingsDropdown(page, check)
     local dropdown = CreateFrame("DropdownButton", nil, page, "WowStyle1DropdownTemplate")
-    dropdown:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -4)
-    dropdown:SetWidth(206)
+    dropdown:SetPoint("TOPLEFT", check, "TOPLEFT", columnStep + 8, -12)
+    dropdown:SetSize(206, 26)
+    return dropdown
+end
+
+local function FlightSoundOptions(page, check)
+    local dropdown = SettingsDropdown(page, check)
+    dropdown:SetupMenu(function(_, menu)
+        for _, sound in ipairs(ns.FlightArrivalSounds) do
+            local key, title = sound[1], sound[2]
+            menu:CreateRadio(title, function()
+                return ns.GetFlightArrivalSound()[1] == key
+            end, function()
+                ns.db.flightArrivalSoundChoice = key
+                ns.PlayFlightArrivalSound()
+            end)
+        end
+    end)
+end
+
+local function NumberOptions(page, check)
+    local dropdown = SettingsDropdown(page, check)
     dropdown:SetupMenu(function(_, menu)
         for _, entry in ipairs(numberColors) do
             local key, title = entry[1], entry[2]
-            menu:CreateRadio(title, function() return ns.StatNumberColor() == key end, function()
+            local option = menu:CreateRadio(title, function() return ns.StatNumberColor() == key end, function()
                 ns.db.statsNumberColor = key
+            end)
+            option:AddInitializer(function(row)
+                local titleText = row.fontString
+                local lineHeight = titleText:GetHeight()
+                row.leftTexture1:SetPoint("LEFT", -3, (lineHeight + 1) / 2)
+                local example = row:AttachFontString()
+                example:SetFont(titleText:GetFont())
+                example:SetHeight(lineHeight)
+                example:SetJustifyH("LEFT")
+                example:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 0, -1)
+                example:SetText(ns.FormatStat("+10 Интеллект", false, false, key))
+                local width = math.max(titleText:GetUnboundedStringWidth(), example:GetUnboundedStringWidth()) + 26
+                return width, lineHeight * 2 + 3
             end)
         end
     end)
     SetTooltip(dropdown, "Цвет чисел", "В режиме «По знаку» плюс зелёный, минус красный, число без знака белое.")
-    return dropdown, label
+    return dropdown
 end
 
 -- Spell IDs identify the entries across locales. Macro names must fit 16 characters including the prefix.
@@ -475,6 +506,21 @@ function ns.CreateLootPanel(name, title, width, height)
     return window, close
 end
 
+function ns.CreateLootSizeButton(window, anchor, atlas, disabledAtlas, onClick)
+    local button = CreateFrame("Button", nil, window)
+    button:SetSize(24, 24)
+    button:SetFrameLevel(math.max(anchor:GetFrameLevel(), window.TitleContainer:GetFrameLevel()) + 1)
+    button:SetPoint("RIGHT", anchor, "LEFT", -4, 0)
+    button:EnableMouse(true)
+    button:RegisterForClicks("LeftButtonUp")
+    button:SetNormalAtlas(atlas)
+    button:SetPushedAtlas(atlas .. "-Pressed")
+    button:SetDisabledAtlas(disabledAtlas)
+    button:SetHighlightAtlas("RedButton-Highlight", "ADD")
+    button:SetScript("OnClick", onClick)
+    return button
+end
+
 local function CreateBookWindow(name, width, height)
     local window = CreateFrame("Frame", name, UIParent, "PortraitFrameTemplate")
     window:SetSize(width, height)
@@ -493,7 +539,7 @@ local function CreateBookWindow(name, width, height)
     window:SetTitle("RainonUI")
     window:SetPortraitToAsset(portrait)
     -- Align the logo with the portrait rim without moving the template's circular mask.
-    window:SetPortraitTexCoord(0.04, 1.04, 0.025, 1.025)
+    window:SetPortraitTexCoord(-0.05, 1.05, -0.01, 1.09)
 
     -- Match the compact Forever book: the right-hand page includes the top seam.
     local parchment = window:CreateTexture(nil, "BACKGROUND", nil, 1)
@@ -504,7 +550,7 @@ local function CreateBookWindow(name, width, height)
     return window
 end
 
-function ns.BuildUpdateNotice(sections)
+function ns.BuildUpdateNotice(sections, option)
     local window = CreateBookWindow("RainonUIForeverUpdateNotice", 480, 300)
     local titleText = window.TitleContainer.TitleText
     titleText:ClearAllPoints()
@@ -520,7 +566,7 @@ function ns.BuildUpdateNotice(sections)
     divider:SetPoint("TOPRIGHT", -25, -79)
 
     local warning = BookText(window, "SystemFont_Med1",
-        "Чтобы это сообщение не появлялось, отключи его в настройках аддона во вкладке «Общие».")
+        "Эту же настройку можно изменить во вкладке «Общие».")
     warning:SetTextColor(0.68, 0.06, 0.06)
     local font, size = warning:GetFont()
     warning:SetFont(font, size, "OUTLINE")
@@ -539,12 +585,26 @@ function ns.BuildUpdateNotice(sections)
         line:SetWordWrap(true)
         y = y - line:GetStringHeight() - 14
     end
+    local check = CreateFrame("CheckButton", nil, window, "UICheckButtonTemplate")
+    check:SetSize(23, 23)
+    check:SetPoint("TOPLEFT", 30, y)
+    local label = BookText(check, "SystemFont_Med1", "Включить оповещение о новых функциях")
+    label:SetPoint("LEFT", check, "RIGHT", 4, 0)
+    check:SetHitRectInsets(0, -label:GetStringWidth() - 4, 0, 0)
+    function window:RefreshSetting()
+        check:SetChecked(ns.Enabled(option))
+    end
+    check:SetScript("OnClick", function(self)
+        ns.db.features[option] = not not self:GetChecked()
+        ns.RefreshOptions()
+    end)
+
     local close = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
     close:SetSize(102, 25)
     close:SetPoint("BOTTOMRIGHT", -24, 16)
     close:SetText("Закрыть")
     close:SetScript("OnClick", function() window:Hide() end)
-    window:SetHeight(-y + 45)
+    window:SetHeight(-y + 70)
     return window
 end
 
@@ -615,29 +675,27 @@ function ns.BuildOptions(settings, extraOptions)
 
     local checks = {}
     local equipment = pagesByKey.equipment
-    local dropdown, numberLabel = NumberOptions(equipment)
+    local numberDropdown
     local qualityMenus = {}
     local warning = "|cffff6962Выбери качество|r"
-    local function AddQualityMenu(option, y)
+    local function AddQualityMenu(option, check)
         local feature = option.key
         local field = feature .. "Qualities"
-        local menuButton = CreateFrame("DropdownButton", nil, equipment, "WowStyle1DropdownTemplate")
-        menuButton:SetPoint("TOPLEFT", columnStep + 8, y - 12)
-        menuButton:SetSize(206, 26)
-        if feature ~= "autoGreed" then menuButton:EnableRegenerateOnResponse() end
+        local maxQuality = ns.MaxLootQuality(feature)
+        local menuButton = SettingsDropdown(equipment, check)
 
         local function NeedsSelection()
             return ns.Enabled(feature) and not ns.HasLootQualitySelected(feature)
         end
         local captions = {}
-        for quality = 2, 3 do
+        for quality = 2, maxQuality do
             local color = ITEM_QUALITY_COLORS[quality]
             captions[quality] = ("|cff%02x%02x%02x%s|r"):format(math.floor(color.r * 255 + 0.5),
                 math.floor(color.g * 255 + 0.5), math.floor(color.b * 255 + 0.5), ns.LootQualityNames[quality])
         end
         local function RefreshQuality()
             local selected = {}
-            for quality = 2, 3 do
+            for quality = 2, maxQuality do
                 if ns.IsLootQualitySelected(feature, quality) then selected[#selected + 1] = captions[quality] end
             end
             local caption = #selected > 0 and table.concat(selected, ", ") or "Качество добычи"
@@ -648,7 +706,7 @@ function ns.BuildOptions(settings, extraOptions)
         menuButton:SetupMenu(function(_, menu)
             local showWarning = NeedsSelection()
             if showWarning then menu:CreateTitle(warning) end
-            for quality = 2, 3 do
+            for quality = 2, maxQuality do
                 local value = quality
                 menu:CreateCheckbox(captions[value], function()
                     return ns.IsLootQualitySelected(feature, value)
@@ -658,7 +716,7 @@ function ns.BuildOptions(settings, extraOptions)
                     if option.changed then option.changed() end
                     RefreshQuality()
                     -- Only a change to the warning needs a new menu. Keep open submenus for checkbox updates.
-                    if feature == "autoGreed" and showWarning ~= NeedsSelection() then
+                    if showWarning ~= NeedsSelection() then
                         menuButton:GenerateMenu()
                     end
                 end)
@@ -679,6 +737,21 @@ function ns.BuildOptions(settings, extraOptions)
                         return row.fontString:GetUnboundedStringWidth() + 32, 24
                     end)
                 end
+            else
+                menu:CreateDivider()
+                local more = menu:CreateButton("Больше настроек")
+                more:CreateCheckbox("Не скрывать окно автоматически", function()
+                    return ns.db.groupNeedKeepOpen == true
+                end, ns.ToggleGroupNeedKeepOpen)
+                local scale = more:CreateButton("Масштаб окна")
+                for percent = 100, 160, 10 do
+                    local value = percent
+                    scale:CreateRadio(("%d%%"):format(value), function()
+                        return ns.GetGroupNeedScale() == value
+                    end, function()
+                        ns.SetGroupNeedScale(value)
+                    end)
+                end
             end
         end)
         qualityMenus[#qualityMenus + 1] = RefreshQuality
@@ -693,27 +766,38 @@ function ns.BuildOptions(settings, extraOptions)
         local shorten, colors = ns.Enabled("stats"), ns.Enabled("statsColors")
         checks.statsMerge:SetEnabled(shorten)
         checks.statsMerge:SetAlpha(shorten and 1 or 0.45)
-        dropdown:SetEnabled(colors)
-        numberLabel:SetAlpha(colors and 1 or 0.45)
+        numberDropdown:SetEnabled(colors)
         for _, refreshQuality in ipairs(qualityMenus) do refreshQuality() end
         RefreshTabs()
     end
+
+    window.RefreshSettings = Refresh
 
     local counts = {}
     for _, option in ipairs(settings) do
         local key = option.tab or "general"
         local index = counts[key] or 0
         local hasQualityMenu = option.key == "groupNeed" or option.key == "autoGreed"
-        if hasQualityMenu and index % 2 == 1 then
+        local hasNumberMenu = option.key == "statsColors"
+        local hasSoundMenu = option.key == "flightArrivalSound"
+        local hasDropdown = hasQualityMenu or hasNumberMenu or hasSoundMenu
+        if hasDropdown and index % 2 == 1 then
             index = index + 1
         end
         local columns = pagesByKey[key].optionColumns
         local x = (index % columns) * columnStep
         local y = firstRow - math.floor(index / columns) * rowStep
         local width = columns == 1 and 400 or columnWidth
-        checks[option.key] = MakeCheck(pagesByKey[key], option, x, y, width, Refresh)
-        if hasQualityMenu then AddQualityMenu(option, y) end
-        counts[key] = index + (hasQualityMenu and 2 or 1)
+        local check = MakeCheck(pagesByKey[key], option, x, y, width, Refresh)
+        checks[option.key] = check
+        if hasNumberMenu then
+            numberDropdown = NumberOptions(equipment, check)
+        elseif hasQualityMenu then
+            AddQualityMenu(option, check)
+        elseif hasSoundMenu then
+            FlightSoundOptions(pagesByKey[key], check)
+        end
+        counts[key] = index + (hasDropdown and 2 or 1)
     end
 
     local general = pagesByKey.general
