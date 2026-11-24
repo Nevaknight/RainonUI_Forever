@@ -506,6 +506,11 @@ end
 
 function ns.BuildUpdateNotice(sections)
     local window = CreateBookWindow("RainonUIForeverUpdateNotice", 480, 300)
+    local titleText = window.TitleContainer.TitleText
+    titleText:ClearAllPoints()
+    titleText:SetPoint("TOP", window, "TOP", 0, -6)
+    titleText:SetJustifyH("CENTER")
+
     local heading = BookText(window, "SystemFont_Huge2", "Новые функции")
     heading:SetPoint("TOPLEFT", 50, -42)
     local divider = window:CreateTexture(nil, "ARTWORK")
@@ -517,6 +522,8 @@ function ns.BuildUpdateNotice(sections)
     local warning = BookText(window, "SystemFont_Med1",
         "Чтобы это сообщение не появлялось, отключи его в настройках аддона во вкладке «Общие».")
     warning:SetTextColor(0.68, 0.06, 0.06)
+    local font, size = warning:GetFont()
+    warning:SetFont(font, size, "OUTLINE")
     warning:SetPoint("TOPLEFT", 34, -101)
     warning:SetWidth(412)
     warning:SetWordWrap(true)

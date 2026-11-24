@@ -29,7 +29,10 @@ local function GetBoE(bag, slot)
 end
 
 local function ItemGUID(bag, slot)
-    return C_Item.GetItemGUID(ItemLocation:CreateFromBagAndSlot(bag, slot))
+    local guid = C_Item.GetItemGUID(ItemLocation:CreateFromBagAndSlot(bag, slot))
+    if type(guid) == "string" and not (issecretvalue and issecretvalue(guid)) and guid ~= "" then
+        return guid
+    end
 end
 
 local function ReadBagItem(bag, slot)
@@ -61,7 +64,7 @@ StaticPopupDialogs[popup] = {
     OnAccept = function(_, sale)
         if not CanSell() then return end
         local info, guid = ReadBagItem(sale.bag, sale.slot)
-        if not info or guid ~= sale.guid or info.hyperlink ~= sale.link or info.stackCount ~= sale.count then return end
+        if not guid or guid ~= sale.guid or info.hyperlink ~= sale.link or info.stackCount ~= sale.count then return end
 
         if not sale.fromCursor then
             if GetCursorInfo() or info.isLocked or MerchantFrame.selectedTab == 2 then return end
@@ -80,7 +83,7 @@ StaticPopupDialogs[popup] = {
 local function ConfirmSale(bag, slot, fromCursor)
     if StaticPopup_Visible(popup) then return end
     local info, guid = ReadBagItem(bag, slot)
-    if not info or (not fromCursor and info.isLocked) then return end
+    if not guid or (not fromCursor and info.isLocked) then return end
     StaticPopup_Show(popup, info.hyperlink, nil, {
         bag = bag,
         slot = slot,

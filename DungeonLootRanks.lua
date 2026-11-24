@@ -503,13 +503,13 @@ local function CreateItem(row)
     return button
 end
 
-local function RankedItems(journal, dungeon, boss, extraLoot)
+local function RankedItems(journal, dungeon, boss, extraLoot, extraItems)
     local ids, seen = {}, {}
     local shared = journal.GetBossSharedLoot and journal.GetBossSharedLoot(dungeon, boss)
     for _, loot in ipairs({ boss.loot or {}, shared or {}, extraLoot or {} }) do
         for _, item in ipairs(loot) do
             local id = item[1]
-            if ranks[id] and not seen[id] then
+            if (ranks[id] or (extraItems and extraItems[id])) and not seen[id] then
                 ids[#ids + 1] = id
                 seen[id] = true
             end
@@ -523,10 +523,12 @@ ns.DungeonLootRankSource = {
     dungeonName = DungeonName,
     bestRank = BestRank,
     addRanks = AddRanks,
-    dungeonItems = function(journal, dungeon, entry)
-        local ids, seen = {}, {}
+    dungeonItems = function(journal, dungeon, entry, tierSet)
+        local ids, seen, tierDrops = {}, {}, {}
         local function AddLoot(boss)
-            for _, id in ipairs(RankedItems(journal, dungeon, boss)) do
+            local eligibleTierItems = not boss.trash and not boss.recipeTab and tierSet
+            for _, id in ipairs(RankedItems(journal, dungeon, boss, nil, eligibleTierItems)) do
+                if eligibleTierItems and eligibleTierItems[id] then tierDrops[id] = true end
                 if not seen[id] then
                     ids[#ids + 1] = id
                     seen[id] = true
@@ -535,7 +537,7 @@ ns.DungeonLootRankSource = {
         end
         for _, boss in ipairs(entry.bosses) do AddLoot(boss) end
         if stratholmeSmiths[dungeon] then AddLoot(stratholmeSmiths[dungeon]) end
-        return ids
+        return ids, tierDrops
     end,
 }
 

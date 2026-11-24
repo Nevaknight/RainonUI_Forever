@@ -35,15 +35,42 @@ local function SafeString(value)
     if type(value) == "string" and not (issecretvalue and issecretvalue(value)) then return value end
 end
 
+local roleIcons = {
+    TANK = "|A:roleicon-tiny-tank:12:12|a ",
+    HEALER = "|A:roleicon-tiny-healer:12:12|a ",
+    DAMAGER = "|A:roleicon-tiny-dps:12:12|a ",
+}
+
+local function RoleIcon(guid)
+    local unit = guid and UnitTokenFromGUID and SafeString(UnitTokenFromGUID(guid))
+    local role = unit and UnitGroupRolesAssigned and SafeString(UnitGroupRolesAssigned(unit))
+    return roleIcons[role] or ""
+end
+
 local panel, content
 local rows, drops, updates = {}, {}, {}
 local renderPending, preview
 local rowHeight, contentWidth = 42, 288
 local resultDuration = 3
+local minPanelHeight = rowHeight + 38
+
+local function BorderHeight(top, bottom)
+    if not top or not bottom then return 0 end
+    local _, _, _, _, topOffset = top:GetPoint()
+    local _, _, _, _, bottomOffset = bottom:GetPoint()
+    return top:GetHeight() + bottom:GetHeight() - (topOffset or 0) + (bottomOffset or 0) + 1
+end
 
 local function CreatePanel()
     local close
-    panel, close = ns.CreateLootPanel("RainonUIForeverGroupLoot", "Кто выбрал «Нужно»", 312, rowHeight + 38)
+    panel, close = ns.CreateLootPanel("RainonUIForeverGroupLoot", "Кто выбрал «Нужно»", 312, minPanelHeight)
+    local border = panel.NineSlice
+    if border then
+        -- Keep the original corner atlases and leave room for both side edges.
+        minPanelHeight = math.max(minPanelHeight,
+            BorderHeight(border.TopLeftCorner, border.BottomLeftCorner),
+            BorderHeight(border.TopRightCorner, border.BottomRightCorner))
+    end
     local position = ns.db.groupNeedPosition
     if position then
         panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.x, position.y)
@@ -147,12 +174,7 @@ local function DrawNeed()
     end
     for index = #entries + 1, #rows do rows[index]:Hide() end
     content:SetHeight(height)
-    local panelHeight = height + 38
-    panel:SetHeight(panelHeight)
-    -- Forever's metal corners overlap on short panels unless they are cropped.
-    if NineSliceUtil and NineSliceUtil.UpdateCornerCropping then
-        NineSliceUtil.UpdateCornerCropping(panel, panelHeight)
-    end
+    panel:SetHeight(math.max(height + 38, minPanelHeight))
     panel:Show()
 end
 
@@ -208,7 +230,9 @@ local function UpdateDrop(encounterID, lootID, drop, now)
         if state and state ~= rollStates.NoRoll then voted = voted + 1 end
         if state == rollStates.NeedMainSpec or state == rollStates.NeedOffSpec then
             local name = SafeString(info.playerName)
-            if name then names[#names + 1] = { name = name, class = SafeString(info.playerClass) } end
+            if name then
+                names[#names + 1] = { name = name, class = SafeString(info.playerClass), guid = SafeString(info.playerGUID) }
+            end
         end
     end
     table.sort(names, function(a, b) return a.name < b.name end)
@@ -216,7 +240,8 @@ local function UpdateDrop(encounterID, lootID, drop, now)
         local color = RAID_CLASS_COLORS and voter.class and RAID_CLASS_COLORS[voter.class]
         local hex = color and color.colorStr
         local name = voter.name:gsub("|", "||")
-        names[index] = hex and ("|c" .. hex .. name .. "|r") or name
+        if hex then name = "|c" .. hex .. name .. "|r" end
+        names[index] = RoleIcon(voter.guid) .. name
     end
     local entry = old or { key = key }
     entry.link, entry.quality, entry.start = link, quality, start
