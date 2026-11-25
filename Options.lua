@@ -800,6 +800,14 @@ function ns.BuildOptions(settings, extraOptions)
         counts[key] = index + (hasDropdown and 2 or 1)
     end
 
+    for _, entry in ipairs(windowTabs) do
+        if entry.afterSettings then
+            local page = pagesByKey[entry.key]
+            local y = firstRow - math.ceil((counts[entry.key] or 0) / page.optionColumns) * rowStep
+            entry.afterSettings(page, BookText, y)
+        end
+    end
+
     local general = pagesByKey.general
     local generalY = firstRow - math.ceil((counts.general or 0) / 2) * rowStep
     for _, build in ipairs(extraOptions) do generalY = generalY - build(general, generalY, ink) end

@@ -1,9 +1,8 @@
 # RainonUI Forever — Changelog
 
-## 0.4.0
+## 0.4.1
 
-- Added an optional flight arrival sound in General settings. Choose between Alice and Alexstrasza to preview either sound.
-- Updated the Need roll window with epic loot tracking, pending voters, role and class icons, and the winner's full name. Winners are shown for both Need and Greed.
-- Added scrolling, adjustable height, 100–160% scaling, and an option to keep the latest 20 rolls until the window is closed.
-- Added examples to all three stat number color modes and aligned the equipment dropdowns.
-- Updated the logo and minimap shortcut tooltip. The What's New window can now toggle automatic update notices.
+- Made Pix Xizzix's weekly quest reminders available in General settings. The reminder shows remaining dungeons and includes In Demand - Plague Records. Click a dungeon icon to open the required boss in ForeverDungeonJournal.
+- Fixed the Tier 0 dungeon filter to show only Tier 0 pieces.
+- Settings now close when combat starts and can be reopened after combat.
+- Improved the readability of minimap shortcut labels.

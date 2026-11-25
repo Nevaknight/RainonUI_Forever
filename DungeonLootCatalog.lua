@@ -287,16 +287,17 @@ end
 RenderCatalog = function()
     pendingIcons = {}
     local favoritesOnly = settings.favoritesOnly == true
+    local tierOnly = settings.tierDungeonsOnly
     rankSlider:SetShown(not favoritesOnly)
     local selected = SelectedSpecs()
     local filterSlots = next(settings.slots) ~= nil
     local top, visible = 0, 0
     for _, entry in ipairs(entries) do
-        if not settings.tierDungeonsOnly or next(entry.tierDrops) then
+        if not tierOnly or next(entry.tierDrops) then
             local items = {}
             for _, id in ipairs(entry.items) do
                 local tierZero = entry.tierDrops[id]
-                if not favoritesOnly or settings.favorites[id] then
+                if (not tierOnly or tierZero) and (not favoritesOnly or settings.favorites[id]) then
                     local rank = tierZero and 0 or source.bestRank(id, selected)
                     if rank and (tierZero or ((favoritesOnly or rank <= settings.maximum)
                         and (not filterSlots or MatchesSlot(id)))) then

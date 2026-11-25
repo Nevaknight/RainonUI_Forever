@@ -73,8 +73,20 @@ end
 local panel, minimapButton
 local iconPath = "Interface\\AddOns\\RainonUI_Forever\\Media\\logo"
 
+function ns.PrintCombatMessage(message)
+    if not DEFAULT_CHAT_FRAME then return end
+    local _, instanceType = IsInInstance()
+    -- Like Ellesmere, keep these combat notices out of chat in raids and PvP instances.
+    if instanceType == "raid" or instanceType == "pvp" or instanceType == "arena" then return end
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff6060[RainonUI]|r " .. message)
+end
+
 function ns.ToggleOptions(tab)
     if not ns.db then return end
+    if InCombatLockdown() then
+        ns.PrintCombatMessage("Настройки можно открыть после боя.")
+        return
+    end
     panel = panel or ns.BuildOptions(settings, extraOptions)
     if tab then
         panel:SelectTab(tab)
@@ -84,12 +96,19 @@ function ns.ToggleOptions(tab)
     end
 end
 
+ns.On("PLAYER_REGEN_DISABLED", function()
+    if panel and panel:IsShown() then
+        panel:Hide()
+        ns.PrintCombatMessage("Настройки закрыты: начался бой.")
+    end
+end)
+
 function ns.RefreshOptions()
     if panel and panel:IsShown() then panel:RefreshSettings() end
 end
 
 local function AddMinimapBinding(binding, description)
-    GameTooltip:AddDoubleLine(binding, description, 1 / 255, 176 / 255, 227 / 255, 251 / 255, 253 / 255, 254 / 255)
+    GameTooltip:AddDoubleLine("|cff01b0e3" .. binding .. "|r", "|cfffbfdfe" .. description .. "|r")
 end
 
 local function UpdateMinimapButton()
