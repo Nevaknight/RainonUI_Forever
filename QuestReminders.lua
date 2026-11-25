@@ -428,8 +428,12 @@ local function GetWeeklyState(guid)
     return GetActiveWeeklyQuest() or "available"
 end
 
+local function CanCheckWeeklyQuests()
+    return enteredWorld and ns.Enabled("questReminders") and UnitLevel("player") == 60
+end
+
 local function RefreshReminder()
-    if not enteredWorld or not ns.Enabled("questReminders") then
+    if not CanCheckWeeklyQuests() then
         if reminder and not preview then reminder:Hide() end
         return
     end
@@ -460,7 +464,7 @@ local function RefreshReminder()
 end
 
 local function ScheduleReminderRefresh()
-    if not enteredWorld or not ns.Enabled("questReminders") or refreshScheduled then return end
+    if refreshScheduled or not CanCheckWeeklyQuests() then return end
     refreshScheduled = true
     C_Timer.After(0.5, function()
         refreshScheduled = false
@@ -471,18 +475,23 @@ end
 ns.AddSetting("questReminders", "Напоминания", function()
     dismissed = false
     RefreshReminder()
-end, true, nil, { icon = 134944, detail = pix.description })
+end, true, nil, { icon = 134944, detail = pix.description, tooltip = "Только для персонажей 60-го уровня." })
 
 ns.On("PLAYER_ENTERING_WORLD", function()
     enteredWorld = true
     ScheduleReminderRefresh()
 end)
 ns.On("QUEST_LOG_UPDATE", ScheduleReminderRefresh)
+ns.On("PLAYER_LEVEL_UP", function(level)
+    if level == 60 and enteredWorld and ns.Enabled("questReminders") then
+        C_Timer.After(0.5, RefreshReminder)
+    end
+end)
 ns.On("QUEST_WATCH_UPDATE", function(questID)
     if weeklyQuests[ns.Number(questID)] then ScheduleReminderRefresh() end
 end)
 ns.On("QUEST_TURNED_IN", function(questID)
-    if not weeklyQuests[ns.Number(questID)] then return end
+    if UnitLevel("player") ~= 60 or not weeklyQuests[ns.Number(questID)] then return end
     local guid = UnitGUID("player")
     local seconds = ns.Number(C_DateAndTime.GetSecondsUntilWeeklyReset())
     if guid and seconds and seconds > 0 then
