@@ -116,7 +116,7 @@ local recipes = {
     { key = "arcanite", spell = 17187, profession = 171, name = "Арканитовый слиток", icon = 134459,
         duration = 47 * 3600, frameName = "RainonUIForeverArcanite", x = 160 },
 }
-local refreshPage
+local refreshPage, refreshTracker, nextReminder
 
 function ns.CurrentProfessionCharacter()
     local guid = UnitGUID("player")
@@ -129,9 +129,9 @@ function ns.CurrentProfessionCharacter()
     return character
 end
 
-local function CooldownEntries(now)
+local function CooldownEntries(now, characters)
     local entries = {}
-    for _, character in pairs(ns.db.characters or {}) do
+    for _, character in pairs(characters or {}) do
         if character.name and character.name ~= "" then
             for _, recipe in ipairs(recipes) do
                 local snapshot = character[recipe.key]
@@ -153,7 +153,17 @@ end
 
 local function RefreshCooldowns()
     local now = GetServerTime()
-    local entries = CooldownEntries(now)
+    local entries = CooldownEntries(now, ns.db.characters)
+    if nextReminder then
+        nextReminder:Cancel()
+        nextReminder = nil
+    end
+    for _, entry in ipairs(entries) do
+        if entry.readyAt > now then
+            nextReminder = C_Timer.NewTimer(math.max(1, entry.readyAt - now), RefreshCooldowns)
+            break
+        end
+    end
     for _, recipe in ipairs(recipes) do
         if recipe.frame then
             local names = {}
@@ -171,6 +181,120 @@ local function RefreshCooldowns()
         end
     end
     if refreshPage then refreshPage(entries, now) end
+    if refreshTracker then refreshTracker(entries, now) end
+end
+
+
+local function RemainingText(readyAt, now)
+    local seconds = math.ceil(readyAt - now)
+    if seconds <= 0 then return "Готово" end
+    local minutes = math.ceil(seconds / 60)
+    if minutes >= 1440 then return ("%d д %d ч"):format(math.floor(minutes / 1440), math.floor(minutes / 60) % 24) end
+    if minutes >= 60 then return ("%d ч %02d мин"):format(math.floor(minutes / 60), minutes % 60) end
+    return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
+end
+
+local function BuildProfessionCooldownTracker(parent)
+    local tracker = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    tracker:SetWidth(262)
+    tracker:SetClampedToScreen(true)
+    tracker:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    tracker:SetBackdropColor(0.08, 0.057, 0.035, 0.97)
+    local title = tracker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -10)
+    title:SetText("Откаты профессий")
+    local empty = tracker:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    empty:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -9)
+    empty:SetPoint("RIGHT", -12, 0)
+    empty:SetJustifyH("LEFT")
+    empty:SetText("Открой алхимию или портняжное дело на персонаже с изученным рецептом.")
+
+    local scroll = CreateFrame("ScrollFrame", nil, tracker, "ScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 12, -31)
+    scroll:SetPoint("BOTTOMRIGHT", -28, 9)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(220, 1)
+    scroll:SetScrollChild(content)
+    scroll:HookScript("OnScrollRangeChanged", function(_, _, range)
+        scroll.ScrollBar:SetShown(range > 0)
+        if scroll:GetVerticalScroll() > range then scroll:SetVerticalScroll(range) end
+    end)
+
+    local rows, entries = {}, {}
+    local rowHeight = 31
+    local function UpdateTimes(now)
+        for i, entry in ipairs(entries) do
+            local status = rows[i].status
+            status:SetText(RemainingText(entry.readyAt, now))
+            if entry.readyAt <= now then
+                status:SetTextColor(0.45, 1, 0.45)
+            else
+                status:SetTextColor(1, 0.82, 0.38)
+            end
+        end
+    end
+
+    local elapsedSinceUpdate = 0
+    tracker:SetScript("OnUpdate", function(_, elapsed)
+        elapsedSinceUpdate = elapsedSinceUpdate + elapsed
+        if elapsedSinceUpdate < 1 then return end
+        elapsedSinceUpdate = 0
+        UpdateTimes(GetServerTime())
+    end)
+    tracker:HookScript("OnShow", function()
+        tracker:ClearAllPoints()
+        local right, left = parent:GetRight(), parent:GetLeft()
+        if right and GetScreenWidth() - right >= tracker:GetWidth() + 44 then
+            tracker:SetPoint("TOPLEFT", parent, "TOPRIGHT", 44, -6)
+        elseif left and left >= tracker:GetWidth() + 8 then
+            tracker:SetPoint("TOPRIGHT", parent, "TOPLEFT", -8, -6)
+        else
+            tracker:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -42, -44)
+        end
+    end)
+    tracker:Hide()
+
+    return tracker, function(newEntries, now)
+        entries = newEntries
+        empty:SetShown(#entries == 0)
+        scroll:SetShown(#entries > 0)
+        tracker:SetHeight(#entries == 0 and 76 or 40 + math.min(#entries, 6) * rowHeight)
+        for i, entry in ipairs(entries) do
+            local row = rows[i]
+            if not row then
+                row = CreateFrame("Frame", nil, content)
+                rows[i] = row
+                row:SetSize(220, rowHeight)
+                row:SetPoint("TOPLEFT", 0, -(i - 1) * rowHeight)
+                row.icon = row:CreateTexture(nil, "ARTWORK")
+                row.icon:SetSize(23, 23)
+                row.icon:SetPoint("LEFT")
+                row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 7, 2)
+                row.name:SetWidth(120)
+                row.name:SetJustifyH("LEFT")
+                row.name:SetWordWrap(false)
+                row.item = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                row.item:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 7, -1)
+                row.item:SetTextColor(0.8, 0.75, 0.68)
+                row.status = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                row.status:SetPoint("TOPRIGHT", 0, -3)
+            end
+            row.icon:SetTexture(entry.recipe.icon)
+            row.name:SetText(entry.name)
+            row.item:SetText(entry.recipe.name)
+            row:Show()
+        end
+        for i = #entries + 1, #rows do rows[i]:Hide() end
+        content:SetHeight(math.max(1, #entries * rowHeight))
+        scroll.ScrollBar:SetShown(#entries > 6)
+        UpdateTimes(now)
+    end
 end
 
 local function BuildCharacters(page, text, y)
@@ -279,49 +403,99 @@ ns.AddSetting("mooncloth", "Готовность луноткани", RefreshCoo
 ns.AddSetting("arcanite", "Готовность арканита", RefreshCooldowns, true, "professions", { icon = recipes[2].icon })
 ns.On("PLAYER_LOGIN", function()
     for _, recipe in ipairs(recipes) do BuildReminder(recipe) end
-    C_Timer.NewTicker(15, RefreshCooldowns)
     RefreshCooldowns()
 end)
 
-local function ReadCooldowns()
-    local trade = C_TradeSkillUI
-    if not (ProfessionsFrame and ProfessionsFrame:IsShown() and trade and trade.GetBaseProfessionInfo
-        and trade.GetRecipeInfo and trade.GetRecipeCooldown) then return end
-    if (trade.IsTradeSkillLinked and trade.IsTradeSkillLinked()) or (trade.IsTradeSkillGuild and trade.IsTradeSkillGuild()) then return end
-    local info = trade.GetBaseProfessionInfo()
-    if not info then return end
+local tracker, pendingRead, professionOpen
 
-    for _, recipe in ipairs(recipes) do
-        if recipe.profession == info.professionID then
-            local data = trade.GetRecipeInfo(recipe.spell)
-            if not data or type(data.learned) ~= "boolean" then return end
-            local character = ns.CurrentProfessionCharacter()
-            if not character then return end
-            if data.learned then
-                local ok, cooldown = pcall(trade.GetRecipeCooldown, recipe.spell)
-                if not ok or (issecretvalue and issecretvalue(cooldown)) then return end
-                local now = GetServerTime()
-                character[recipe.key] = { readyAt = now + math.max(0, ns.Number(cooldown) or 0), at = now }
-            else
-                character[recipe.key] = nil
-            end
-            RefreshCooldowns()
-            return
-        end
-    end
+local function HasOpenProfession()
+    return professionOpen and ProfessionsFrame and ProfessionsFrame:IsVisible() and C_TradeSkillUI
 end
 
-local pendingRead
+local function ReadRecipeCooldown(trade, recipe)
+    -- Some Forever builds expose only the spell cooldown.
+    if trade.GetRecipeCooldown then
+        local remaining = trade.GetRecipeCooldown(recipe.spell)
+        if issecretvalue and issecretvalue(remaining) then return end
+        remaining = ns.Number(remaining)
+        if remaining then return math.max(0, remaining) end
+    end
+    if not C_Spell or not C_Spell.GetSpellCooldown then return end
+    local info = C_Spell.GetSpellCooldown(recipe.spell)
+    if not info or (issecretvalue and issecretvalue(info)) then return end
+    local start, duration = ns.Number(info.startTime), ns.Number(info.duration)
+    if not start or not duration then return end
+    if start == 0 or duration <= 2 then return 0 end
+
+    local remaining = start + duration - GetTime()
+    -- Game uptime may wrap at 2^32 milliseconds.
+    if remaining > duration + 1 then remaining = remaining % 4294967.296 end
+    if remaining <= duration + 1 then return math.max(0, remaining) end
+end
+
+local function ReadCooldowns()
+    if not HasOpenProfession() then return end
+    local trade = C_TradeSkillUI
+    if (trade.IsTradeSkillLinked and trade.IsTradeSkillLinked()) or (trade.IsTradeSkillGuild and trade.IsTradeSkillGuild()) then
+        if tracker then tracker:Hide() end
+        return
+    end
+
+    if not tracker then tracker, refreshTracker = BuildProfessionCooldownTracker(ProfessionsFrame) end
+    tracker:Show()
+    if trade.GetBaseProfessionInfo and trade.GetRecipeInfo
+        and (not trade.IsTradeSkillReady or trade.IsTradeSkillReady()) then
+        local info = trade.GetBaseProfessionInfo()
+        for _, recipe in ipairs(recipes) do
+            if info and recipe.profession == info.professionID then
+                local data = trade.GetRecipeInfo(recipe.spell)
+                if not data or (issecretvalue and issecretvalue(data.learned)) or type(data.learned) ~= "boolean" then break end
+                local character = ns.CurrentProfessionCharacter()
+                if not character then break end
+                if data.learned then
+                    local ok, remaining = pcall(ReadRecipeCooldown, trade, recipe)
+                    if ok and remaining then
+                        local now = GetServerTime()
+                        character[recipe.key] = { readyAt = now + remaining, at = now }
+                    end
+                else
+                    character[recipe.key] = nil
+                end
+                break
+            end
+        end
+    end
+    RefreshCooldowns()
+end
+
+local function CloseProfession()
+    professionOpen = false
+    if pendingRead then
+        pendingRead:Cancel()
+        pendingRead = nil
+    end
+    if tracker then tracker:Hide() end
+end
+
 local function ScheduleRead()
-    if pendingRead then return end
-    pendingRead = true
-    C_Timer.After(0.6, function()
+    if pendingRead or not HasOpenProfession() then return end
+    pendingRead = C_Timer.NewTimer(0.6, function()
         pendingRead = nil
         ReadCooldowns()
     end)
 end
 
-for _, event in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED",
+ns.On("TRADE_SKILL_SHOW", function()
+    professionOpen = true
+    -- TRADE_SKILL_SHOW can arrive before Blizzard shows its frame.
+    if pendingRead then pendingRead:Cancel() end
+    pendingRead = C_Timer.NewTimer(0, function()
+        pendingRead = nil
+        ReadCooldowns()
+    end)
+end)
+ns.On("TRADE_SKILL_CLOSE", CloseProfession)
+for _, event in ipairs({ "TRADE_SKILL_LIST_UPDATE", "TRADE_SKILL_DATA_SOURCE_CHANGED",
     "TRADE_SKILL_ITEM_CRAFTED_RESULT" }) do
     ns.On(event, ScheduleRead)
 end
@@ -333,7 +507,7 @@ ns.On("UNIT_SPELLCAST_SUCCEEDED", function(unit, _, spell)
             local character = ns.CurrentProfessionCharacter()
             if not character then return end
             local now = GetServerTime()
-            -- Keep a deadline even if the profession window is closed at completion.
+            -- A successful craft gives us a deadline without querying the game.
             character[recipe.key] = { readyAt = now + recipe.duration, at = now }
             RefreshCooldowns()
             ScheduleRead()
@@ -342,3 +516,10 @@ ns.On("UNIT_SPELLCAST_SUCCEEDED", function(unit, _, spell)
     end
 end)
 
+function ns.CreateProfessionCooldownPreview(parent)
+    local preview, update = BuildProfessionCooldownTracker(parent)
+    return function(characters, now)
+        update(CooldownEntries(now, characters), now)
+        preview:Show()
+    end
+end

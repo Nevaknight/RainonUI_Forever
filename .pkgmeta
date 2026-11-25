@@ -7,7 +7,6 @@ ignore:
   - CrateData.lua
   - Crates.lua
   - LocalData.lua
-  - Junk.lua
   - LocalTests.lua
   - QuestNavigationTest.lua
   - QuestNavigationTest.xml

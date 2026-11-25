@@ -3,10 +3,12 @@ local categories = { { "junk", "Мусор" }, { "profession", "Професси
 local valid = { junk = true, profession = true, quest = true, other = true }
 local provider, providerName = "rainonui-notes", "RainonUI: личные подсказки"
 local editor, refresh, selected
+local kind = "item"
 
-local function Personal()
-    ns.db.itemNotes = ns.db.itemNotes or {}
-    return ns.db.itemNotes
+local function Personal(noteKind)
+    local key = noteKind == "spell" and "spellNotes" or "itemNotes"
+    ns.db[key] = ns.db[key] or {}
+    return ns.db[key]
 end
 
 local function Author(id)
@@ -28,31 +30,26 @@ local function IsJunk(_, _, id)
     return (own and own.category == "junk") or (shared and shared.category == "junk") or false
 end
 
-local function Save(id, text, category)
+local function Save(noteKind, id, text, category)
     id = tonumber(id)
     text = type(text) == "string" and text:match("^%s*(.-)%s*$") or ""
     if not id or id <= 0 or id ~= math.floor(id) or not valid[category] then return false end
-    Personal()[id] = { text = text, category = category }
-    RefreshBags()
+    Personal(noteKind)[id] = { text = text, category = category }
+    if noteKind == "item" then RefreshBags() end
     return true
 end
 
 local visible = { GameTooltip = true, ItemRefTooltip = true, ShoppingTooltip1 = true, ShoppingTooltip2 = true,
     ItemRefShoppingTooltip1 = true, ItemRefShoppingTooltip2 = true }
 local marked = setmetatable({}, { __mode = "k" })
-local function AddNotes(tip, item)
-    if not ns.Enabled("itemNotes") or not tip or not visible[tip:GetName()] or tip:IsForbidden() then return end
-    local id = item and ns.Number(item.id)
-    if not id then
-        local _, link = tip:GetItem()
-        id = link and tonumber(link:match("item:(%d+)"))
-    end
-    if not id then return end
-    local own, shared = Personal()[id], Author(id)
+local function AddNotes(tip, noteKind, id)
+    if not id or not ns.Enabled("itemNotes") or not visible[tip:GetName()] or tip:IsForbidden() then return end
+    local own = Personal(noteKind)[id]
+    local shared = noteKind == "item" and Author(id)
     if own and (not own.text or own.text == "") then own = nil end
     if shared and (not shared.text or shared.text == "") then shared = nil end
     if not own and not shared then return end
-    local signature = id .. ":" .. (own and own.text or "") .. ":" .. (shared and shared.text or "")
+    local signature = noteKind .. id .. ":" .. (own and own.text or "") .. ":" .. (shared and shared.text or "")
     if marked[tip] == signature then return end
     marked[tip] = signature
     tip:AddLine(" ")
@@ -66,6 +63,33 @@ local function AddNotes(tip, item)
         tip:AddLine(Plain(shared.text), 1, 1, 1, true)
     end
     tip:Show()
+end
+
+local function AddItemNotes(tip, item)
+    if not visible[tip:GetName()] or tip:IsForbidden() then return end
+    local id = item and ns.Number(item.id)
+    if not id then
+        local _, link = tip:GetItem()
+        if link and not (issecretvalue and issecretvalue(link)) then
+            id = tonumber(link:match("item:(%d+)"))
+        end
+    end
+    AddNotes(tip, "item", id)
+end
+
+local function AddSpellNotes(tip, spell)
+    AddNotes(tip, "spell", spell and ns.Number(spell.id))
+end
+
+local function ShowNoteTooltip(owner, noteKind, id)
+    GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
+    if noteKind == "spell" then
+        GameTooltip:SetSpellByID(id)
+    else
+        GameTooltip:SetItemByID(id)
+    end
+    AddNotes(GameTooltip, noteKind, id)
+    GameTooltip:Show()
 end
 
 local function ReadItemName(id)
@@ -84,11 +108,17 @@ local function ItemName(id)
     return name or ("Предмет " .. id)
 end
 
-local function ItemCaption(id, size)
-    return ("|T%s:%d:%d|t %s"):format(C_Item.GetItemIconByID(id) or 134400, size or 24, size or 24, ItemName(id))
+local function NoteName(noteKind, id)
+    if noteKind == "spell" then return C_Spell.GetSpellName(id) or ("Заклинание " .. id) end
+    return ItemName(id)
 end
 
-local function Build(page, bookText)
+local function NoteIcon(noteKind, id)
+    if noteKind == "spell" then return C_Spell.GetSpellTexture(id) or 134400 end
+    return C_Item.GetItemIconByID(id) or 134400
+end
+
+local function Build(page, bookText, title)
     local width, buttonHeight = 447, 24
     local function Text(parent, text, x, y, w, font)
         local f = bookText(parent, font or "GameFontHighlightSmall", text)
@@ -120,7 +150,10 @@ local function Build(page, bookText)
         ns.db.useRainonNotes = not not self:GetChecked()
         RefreshBags()
     end)
-    Text(page, "Кликни на предмет в сумках через Shift + ЛКМ или нажми «По ID».", 0, -87)
+    local sourceHint = Text(page, "", 0, -87, width)
+    local chooseKind = CreateFrame("DropdownButton", nil, page, "WowStyle1DropdownTemplate")
+    chooseKind:SetPoint("RIGHT", title, "LEFT", width, 0)
+    chooseKind:SetSize(136, buttonHeight)
     local paddingLabel = bookText(page, "GameFontHighlightSmall", "Пр")
     local itemPadding = math.ceil(paddingLabel:GetUnboundedStringWidth())
     paddingLabel:Hide()
@@ -143,9 +176,7 @@ local function Build(page, bookText)
     itemField:SetMouseMotionEnabled(true)
     itemField:SetScript("OnEnter", function(self)
         if not selected then return end
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-        GameTooltip:SetItemByID(selected)
-        GameTooltip:Show()
+        ShowNoteTooltip(self, kind, selected)
     end)
     itemField:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
@@ -153,12 +184,12 @@ local function Build(page, bookText)
     idRow:SetPoint("TOPLEFT", itemField, "BOTTOMLEFT", 0, -6)
     idRow:SetSize(width, buttonHeight)
     idRow:Hide()
-    local idLabel = bookText(idRow, "GameFontHighlightSmall", "ID предмета")
+    local idLabel = bookText(idRow, "GameFontHighlightSmall", "ID")
     idLabel:SetPoint("LEFT")
     local idBox = CreateFrame("EditBox", nil, idRow, "InputBoxTemplate")
     idBox:SetPoint("LEFT", idLabel, "RIGHT", 12, 0)
     idBox:SetSize(110, buttonHeight)
-    idBox:SetMaxLetters(24)
+    idBox:SetMaxLetters(255)
     idBox:SetAutoFocus(false)
     local idError = bookText(idRow, "GameFontHighlightSmall", "")
     idError:SetTextColor(0.68, 0.06, 0.06)
@@ -204,7 +235,7 @@ local function Build(page, bookText)
     local hint = Text(page, "Если ты пользуешься Baganator, зайди в настройки и выбери в пункте определения мусора «RainonUI: личные подсказки».", 0, -199, width)
     hint:SetWordWrap(true)
     local scroll = CreateFrame("ScrollFrame", nil, page, "ScrollFrameTemplate")
-    scroll:SetPoint("BOTTOMRIGHT", -20, 0)
+    scroll:SetPoint("BOTTOMRIGHT", page, "BOTTOMLEFT", width, 0)
     local function LayoutEditor(show)
         local idOffset = idRow:IsShown() and buttonHeight + 12 or 0
         panel:SetPoint("TOPLEFT", 0, -165 - idOffset)
@@ -214,7 +245,8 @@ local function Build(page, bookText)
         heading:SetPoint("TOPLEFT", 0, top)
         hint:ClearAllPoints()
         hint:SetPoint("TOPLEFT", 0, top - 25)
-        scroll:SetPoint("TOPLEFT", 0, top - 61)
+        hint:SetShown(kind == "item")
+        scroll:SetPoint("TOPLEFT", 0, top - (kind == "item" and 61 or 27))
     end
     local function HideIDEntry()
         idBox:ClearFocus()
@@ -227,7 +259,7 @@ local function Build(page, bookText)
         box:SetText("")
         chosenIcon:Hide()
         chosen:SetPoint("LEFT", itemField, "LEFT", itemPadding, 0)
-        chosen:SetText("Предмет не выбран")
+        chosen:SetText(kind == "item" and "Предмет не выбран" or "Заклинание не выбрано")
         category = "other"
         chooseCategory:GenerateMenu()
         LayoutEditor(false)
@@ -235,7 +267,7 @@ local function Build(page, bookText)
     local actionWidth = 85
     local clear = Button(itemField, "Очистить", actionWidth, ClearSelection)
     clear:SetPoint("RIGHT", -itemPadding, 0)
-    Help(clear, "Очистить выбранный предмет. Сохранённая запись останется в списке.")
+    Help(clear, "Сбросить выбор. Сохранённая запись останется в списке.")
     local byID = Button(itemField, "По ID", actionWidth, function()
         if idRow:IsShown() then
             HideIDEntry()
@@ -250,16 +282,16 @@ local function Build(page, bookText)
     byID:SetPoint("RIGHT", clear, "LEFT", -6, 0)
     chosen:SetPoint("RIGHT", byID, "LEFT", -8, 0)
 
-    local function UpdateChosenItem(id)
-        chosenIcon:SetTexture(C_Item.GetItemIconByID(id) or 134400)
-        chosen:SetText(ItemName(id))
+    local function UpdateChosen(id)
+        chosenIcon:SetTexture(NoteIcon(kind, id))
+        chosen:SetText(NoteName(kind, id))
     end
     local function Select(id)
         HideIDEntry()
         selected = id
-        local note = Personal()[id]
+        local note = Personal(kind)[id]
         category = note and note.category or "other"
-        UpdateChosenItem(id)
+        UpdateChosen(id)
         chosenIcon:Show()
         chosen:SetPoint("LEFT", chosenIcon, "RIGHT", 8, 0)
         box:SetText(note and note.text or "")
@@ -268,13 +300,20 @@ local function Build(page, bookText)
         LayoutEditor(true)
     end
     local function SelectByID()
-        local id = tonumber(idBox:GetText():match("^%s*(%d+)%s*$"))
+        local inputText = idBox:GetText()
+        local id = tonumber(inputText:match("^%s*(%d+)%s*$") or inputText:match("|H" .. kind .. ":(%d+)"))
         if not id or id < 1 or id > 2147483647 then
-            idError:SetText("Введи ID предмета.")
+            idError:SetText("Введи ID или ссылку.")
             return
         end
-        if not C_Item.DoesItemExistByID(id) then
-            idError:SetText("Предмет не найден.")
+        local exists
+        if kind == "spell" then
+            exists = C_Spell.DoesSpellExist(id)
+        else
+            exists = C_Item.DoesItemExistByID(id)
+        end
+        if not exists then
+            idError:SetText(kind == "spell" and "Заклинание не найдено." or "Предмет не найден.")
             return
         end
         if id == selected then
@@ -296,20 +335,21 @@ local function Build(page, bookText)
     idBox:SetScript("OnTextChanged", function() idError:SetText("") end)
     editor = function(link)
         if not page:IsVisible() or not IsShiftKeyDown() then return end
-        local id = type(link) == "string" and tonumber(link:match("item:(%d+)"))
-        if id then Select(id) end
+        if type(link) ~= "string" or (issecretvalue and issecretvalue(link)) then return end
+        local id = tonumber(link:match("|H" .. kind .. ":(%d+)") or link:match("^" .. kind .. ":(%d+)"))
+        if id and id ~= selected then Select(id) end
     end
     local save = Button(panel, "Сохранить", 116, function()
-        if not Save(selected, box:GetText(), category) then return end
+        if not Save(kind, selected, box:GetText(), category) then return end
         ClearSelection()
         refresh()
     end)
     save:SetPoint("LEFT", chooseCategory, "RIGHT", 5, 0)
     local function Delete(id)
         if not id then return end
-        Personal()[id] = nil
+        Personal(kind)[id] = nil
         if selected == id then ClearSelection() end
-        RefreshBags()
+        if kind == "item" then RefreshBags() end
         refresh()
     end
     local function DeleteButton(parent, anchor, getID)
@@ -322,7 +362,7 @@ local function Build(page, bookText)
     end
     DeleteButton(panel, save, function() return selected end)
     local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(427, 1)
+    content:SetSize(width, 1)
     scroll:SetScrollChild(content)
     scroll:HookScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
     scroll:HookScript("OnScrollRangeChanged", function(_, _, range)
@@ -333,19 +373,24 @@ local function Build(page, bookText)
     local categoryWidth = math.ceil(measure:GetUnboundedStringWidth()) + 28
     measure:Hide()
     local rows, rowHeight = {}, 34
+    local function Caption(id)
+        return ("|T%s:%d:%d|t %s"):format(NoteIcon(kind, id), buttonHeight, buttonHeight, NoteName(kind, id))
+    end
+
     refresh = function(loadedID)
         if type(loadedID) == "number" then
-            if loadedID == selected then UpdateChosenItem(selected) end
+            if kind ~= "item" then return end
+            if loadedID == selected then UpdateChosen(selected) end
             for _, row in ipairs(rows) do
                 if row.id == loadedID and row:IsShown() then
-                    row.name:SetText(ItemCaption(loadedID, buttonHeight))
+                    row.name:SetText(Caption(loadedID))
                     break
                 end
             end
             return
         end
         local ids = {}
-        for id in pairs(Personal()) do ids[#ids + 1] = id end
+        for id in pairs(Personal(kind)) do ids[#ids + 1] = id end
         table.sort(ids)
         for index, id in ipairs(ids) do
             local row = rows[index]
@@ -361,21 +406,24 @@ local function Build(page, bookText)
                 row.name:SetPoint("LEFT", 0, 0)
                 row.name:SetWordWrap(false)
                 row.drop = CreateFrame("DropdownButton", nil, row, "WowStyle1DropdownTemplate")
-                row.drop:SetPoint("RIGHT", -27, 0)
+                row.drop:SetPoint("RIGHT", -(buttonHeight + 3), 0)
                 row.drop:SetSize(categoryWidth, buttonHeight)
                 row.drop:SetupMenu(function(_, menu)
-                    local itemID = row.id
+                    local id, noteKind = row.id, kind
                     for _, entry in ipairs(categories) do
                         local key, name = entry[1], entry[2]
                         menu:CreateRadio(name, function()
-                            local note = Personal()[itemID]
+                            local note = Personal(noteKind)[id]
                             return note ~= nil and note.category == key
                         end, function()
-                            local note = Personal()[itemID]
-                            if not note or row.id ~= itemID then return end
+                            local note = Personal(noteKind)[id]
+                            if not note or row.id ~= id or kind ~= noteKind then return end
                             note.category = key
-                            if selected == itemID then category = key chooseCategory:GenerateMenu() end
-                            RefreshBags()
+                            if selected == id then
+                                category = key
+                                chooseCategory:GenerateMenu()
+                            end
+                            if noteKind == "item" then RefreshBags() end
                         end)
                     end
                 end)
@@ -385,20 +433,12 @@ local function Build(page, bookText)
                 row.delete = DeleteButton(row, row.drop, function() return row.id end)
                 row:SetScript("OnClick", function() Select(row.id) end)
                 row:SetScript("OnEnter", function(self)
-                    local note = Personal()[row.id]
-                    if not note then return end
-                    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                    GameTooltip:SetText(ItemCaption(row.id))
-                    for _, entry in ipairs(categories) do
-                        if entry[1] == note.category then GameTooltip:AddLine(entry[2], 1, 1, 1) end
-                    end
-                    if note.text and note.text ~= "" then GameTooltip:AddLine(Plain(note.text), 1, 1, 1, true) end
-                    GameTooltip:Show()
+                    if Personal(kind)[row.id] then ShowNoteTooltip(self, kind, row.id) end
                 end)
                 row:SetScript("OnLeave", function() GameTooltip:Hide() end)
             end
             row.id = id
-            row.name:SetText(ItemCaption(id, buttonHeight))
+            row.name:SetText(Caption(id))
             row.drop:GenerateMenu()
             row:Show()
         end
@@ -410,8 +450,25 @@ local function Build(page, bookText)
         HideIDEntry()
         LayoutEditor(selected ~= nil)
     end)
-    ClearSelection()
-    refresh()
+    local function ShowKind()
+        sourceHint:SetText(kind == "item"
+            and "Shift + ЛКМ по предмету в сумке или добавь его по ID."
+            or "Shift + ЛКМ по заклинанию в книге или добавь его по ID.")
+        ClearSelection()
+        scroll:SetVerticalScroll(0)
+        refresh()
+    end
+    chooseKind:SetupMenu(function(_, menu)
+        for _, entry in ipairs({ { "item", "Предметы" }, { "spell", "Заклинания" } }) do
+            local key, label = entry[1], entry[2]
+            menu:CreateRadio(label, function() return kind == key end, function()
+                if kind == key then return end
+                kind = key
+                ShowKind()
+            end)
+        end
+    end)
+    ShowKind()
 end
 
 local registered
@@ -425,22 +482,31 @@ end
 ns.On("PLAYER_LOGIN", function()
     Connect()
     hooksecurefunc("HandleModifiedItemClick", function(link) if editor then editor(link) end end)
+    local function OnSpellLink(link)
+        if kind == "spell" and editor then editor(link) end
+    end
+    if ChatFrameUtil and ChatFrameUtil.InsertLink then
+        hooksecurefunc(ChatFrameUtil, "InsertLink", OnSpellLink)
+    elseif ChatEdit_InsertLink then
+        hooksecurefunc("ChatEdit_InsertLink", OnSpellLink)
+    end
     for name in pairs(visible) do
         local tip = _G[name]
         if tip then tip:HookScript("OnTooltipCleared", function(self) marked[self] = nil end) end
     end
     if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
-        TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, AddNotes)
+        TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, AddItemNotes)
+        TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, AddSpellNotes)
     else
         for name in pairs(visible) do
             local tip = _G[name]
-            if tip and tip:HasScript("OnTooltipSetItem") then tip:HookScript("OnTooltipSetItem", AddNotes) end
+            if tip and tip:HasScript("OnTooltipSetItem") then tip:HookScript("OnTooltipSetItem", AddItemNotes) end
         end
     end
 end)
 ns.On("ADDON_LOADED", function(name) if name == "Baganator" then Connect() end end)
 local function OnItemDataLoaded(id, success)
-    if not success or not refresh then return end
+    if not success or not refresh or kind ~= "item" then return end
     id = ns.Number(id)
     if not id or (id ~= selected and not Personal()[id]) then return end
     C_Timer.After(0, function()
@@ -449,5 +515,5 @@ local function OnItemDataLoaded(id, success)
 end
 ns.On("GET_ITEM_INFO_RECEIVED", OnItemDataLoaded)
 ns.On("ITEM_DATA_LOAD_RESULT", OnItemDataLoaded)
-ns.ItemNotesTab = { key = "itemNotes", title = "Предметы: личные подсказки", icon = 134331, build = Build, toggle = true }
+ns.ItemNotesTab = { key = "itemNotes", title = "Личные подсказки", icon = 134331, build = Build, toggle = true }
 ns.AddSetting("itemNotes", ns.ItemNotesTab.title, RefreshBags)

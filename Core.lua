@@ -175,7 +175,9 @@ local function CreateMinimapButton()
             return
         end
         if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
-        if ns.OpenLootTests and IsAltKeyDown() then
+        if ns.ItemNotesTab and ns.Enabled("itemNotes") and IsShiftKeyDown() then
+            ns.ToggleOptions("itemNotes")
+        elseif ns.OpenLootTests and IsAltKeyDown() then
             ns.OpenLootTests()
         elseif ns.OpenCurrentDungeonLoot then
             ns.OpenCurrentDungeonLoot()
@@ -193,6 +195,9 @@ local function CreateMinimapButton()
         GameTooltip:SetText("RainonUI — Forever")
         AddMinimapBinding("ЛКМ", "Открыть настройки")
         if ns.OpenCurrentDungeonLoot then AddMinimapBinding("ПКМ", "Добыча текущего подземелья") end
+        if ns.ItemNotesTab and ns.Enabled("itemNotes") then
+            AddMinimapBinding("Shift + ПКМ", ns.ItemNotesTab.title)
+        end
         if ns.OpenLootTests then AddMinimapBinding("Alt + ПКМ", "Тестовые окна") end
         if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") then
             AddMinimapBinding("Shift + ЛКМ", "Добыча всех подземелий")
