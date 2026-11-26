@@ -2,8 +2,10 @@ local _, ns = ...
 local feature = "updateNotice"
 
 -- Use the release version as the ID and leave sections empty for a release without news.
-local announcementID = "0.4.3"
-local sections = {}
+local announcementID = "0.4.4"
+local sections = {
+    { title = "Добавлены новые QOL", text = "Добавлено окно для отслеживания ПвП - ALT + ЛКМ" },
+}
 local window, checked
 local function VisibleSections()
     local visible = {}

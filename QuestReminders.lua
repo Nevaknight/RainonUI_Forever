@@ -176,7 +176,11 @@ local function CreateNavigatorMarker(location, map, canvas)
     marker:EnableMouse(true)
     marker:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     marker:SetAttribute("useOnKeyDown", false)
-    ns.SetPixIcon(marker.Icon)
+    if location.icon then
+        marker.Icon:SetTexture(location.icon)
+    else
+        ns.SetPixIcon(marker.Icon)
+    end
 
     local targetName = GetLocale() == "ruRU" and location.name or location.englishName
     local macro = ("/cleartarget\n/targetexact %s\n/tm [exists] ~%d"):format(targetName, location.raidMark)
@@ -215,7 +219,8 @@ local function CreateNavigatorMarker(location, map, canvas)
     return marker
 end
 
-local function OpenNavigatorMap(location)
+function ns.OpenNavigatorMap(location)
+    if not CanUseMapMarker() then return false end
     OpenWorldMap(location.map)
     local map = WorldMapFrame
     local canvas = map and map.ScrollContainer and map.ScrollContainer.Child
@@ -224,12 +229,11 @@ local function OpenNavigatorMap(location)
     markers[location] = marker
     marker.requested = true
     RefreshMarker(marker, location, map, canvas)
+    return true
 end
 
 function ns.OpenPixMap()
-    if not CanUseMapMarker() then return false end
-    OpenNavigatorMap(pix)
-    return true
+    return ns.OpenNavigatorMap(pix)
 end
 
 local reminder

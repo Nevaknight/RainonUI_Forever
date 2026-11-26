@@ -96,7 +96,7 @@ local function Update(loggingOut)
     local previous = ns.db.rest[key]
     if character.wellRested == nil and previous then character.wellRested = previous.wellRested end
 
-    if not ns.Enabled("rest") or character.paused or character.removed then return end
+    if not ns.Enabled("rest") or character.removed then return end
     if IsMaxLevel(level) then
         ns.db.rest[key] = nil
         return
@@ -208,10 +208,10 @@ local function MakeRestRow(content, index, bookText)
     return row
 end
 
-local function CharacterEntries()
+local function CharacterEntries(includeHidden)
     local entries = {}
     for guid, character in pairs(ns.db.restCharacters) do
-        if not character.removed and not IsMaxLevel(character.level) then
+        if not character.removed and not IsMaxLevel(character.level) and (includeHidden or not character.paused) then
             local name = character.name
             if character.realm and character.realm ~= "" then
                 name = ("%s (%s)"):format(name, character.realm)
@@ -233,7 +233,7 @@ local function AddCharacterDropdown(page)
     dropdown:SetWidth(194)
     dropdown:SetPoint("TOPRIGHT", -4, -1)
     dropdown:SetupMenu(function(_, menu)
-        local entries = CharacterEntries()
+        local entries = CharacterEntries(true)
         if #entries == 0 then
             menu:CreateButton("Нет персонажей"):SetEnabled(false)
             return
@@ -241,13 +241,12 @@ local function AddCharacterDropdown(page)
         table.sort(entries, ByName)
 
         for _, entry in ipairs(entries) do
-            local character, guid = entry.character, entry.guid
+            local character = entry.character
             local submenu = menu:CreateButton(entry.name)
             local tracking = submenu:CreateCheckbox("Отслеживать отдых", function()
                 return not character.paused
             end, function()
                 character.paused = not character.paused or nil
-                if guid == key and not character.paused then Update() end
                 refreshPage()
                 return MenuResponse.Refresh
             end)
@@ -291,8 +290,7 @@ function ns.BuildRestPage(page, bookText, top)
         for _, entry in ipairs(entries) do
             local character = entry.character
             local snapshot = ns.db.rest[entry.guid]
-            entry.showBar = tracking and not character.paused
-            if entry.showBar and snapshot and snapshot.level == character.level then
+            if tracking and snapshot and snapshot.level == character.level then
                 entry.xp, entry.cap, entry.seconds, entry.fullAt = ns.ProjectRest(snapshot, entry.guid == key and snapshot.at or now)
             end
         end
@@ -303,7 +301,7 @@ function ns.BuildRestPage(page, bookText, top)
         end)
 
         local hasEntries = #entries > 0
-        message:SetText(tracking and "Пока нет известных персонажей." or "Включи «Отслеживать отдых» во вкладке «Общие».")
+        message:SetText(tracking and "Нет персонажей для показа." or "Включи «Отслеживать отдых» во вкладке «Общие».")
         message:SetShown(not tracking or not hasEntries)
         scroll:SetPoint("TOPLEFT", 0, tracking and top or top - 25)
         scroll:SetShown(hasEntries)
@@ -321,8 +319,8 @@ function ns.BuildRestPage(page, bookText, top)
             row.name:SetWidth(math.min(row.name:GetUnboundedStringWidth() + 1, math.max(1, maxNameWidth)))
             row.wellRested:SetChecked(character.wellRested == true)
 
-            local xp, cap, seconds = entry.xp, entry.cap, entry.seconds
-            row.bar:SetShown(entry.showBar)
+            local xp, cap = entry.xp, entry.cap
+            row.bar:SetShown(tracking)
             row.status:SetShown(tracking)
             row.amount:SetShown(xp ~= nil)
             if xp then
@@ -333,11 +331,7 @@ function ns.BuildRestPage(page, bookText, top)
             else
                 row.bar:SetMinMaxValues(0, 1)
                 row.bar:SetValue(0)
-                if character.paused then
-                    row.status:SetText("Отслеживание выключено")
-                else
-                    row.status:SetText("Первый замер при входе на персонажа")
-                end
+                row.status:SetText("Первый замер при входе на персонажа")
             end
             row:Show()
         end

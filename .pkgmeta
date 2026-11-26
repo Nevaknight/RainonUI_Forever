@@ -8,6 +8,7 @@ ignore:
   - Crates.lua
   - LocalData.lua
   - LocalTests.lua
+  - ActivityTests.lua
   - QuestNavigationTest.lua
   - QuestNavigationTest.xml
   - Archive

@@ -60,6 +60,24 @@ local function RefreshCraftTimer()
     craftTimer:Show()
 end
 
+function ns.CreateTimerBox()
+    local box = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    box:SetSize(218, 32)
+    box:SetFrameStrata("HIGH")
+    box:SetClampedToScreen(true)
+    box:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    box:SetBackdropColor(0.04, 0.03, 0.02, 0.94)
+    local label = box:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    label:SetPoint("CENTER")
+    label:SetFont(ns.CYRILLIC_FONT, 16, "OUTLINE")
+    return box, label
+end
+
 local function ApplyCraftTimer()
     if not ns.Enabled("craftTimer") then
         if craftTimer then craftTimer:UnregisterAllEvents() end
@@ -69,26 +87,13 @@ local function ApplyCraftTimer()
     if not C_TradeSkillUI or not C_TradeSkillUI.GetRemainingRecasts then return end
 
     if not craftTimer then
-        craftTimer = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        craftTimer:SetSize(218, 32)
-        craftTimer:SetFrameStrata("HIGH")
-        craftTimer:SetClampedToScreen(true)
-        craftTimer:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true, tileSize = 16, edgeSize = 12,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 },
-        })
-        craftTimer:SetBackdropColor(0.04, 0.03, 0.02, 0.94)
+        craftTimer, craftText = ns.CreateTimerBox()
         craftTimer:SetMovable(true)
         craftTimer:EnableMouse(true)
         craftTimer:RegisterForDrag("LeftButton")
         craftTimer:SetScript("OnDragStart", craftTimer.StartMoving)
         craftTimer:SetScript("OnDragStop", craftTimer.StopMovingOrSizing)
         craftTimer:SetScript("OnHide", craftTimer.StopMovingOrSizing)
-        craftText = craftTimer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        craftText:SetPoint("CENTER")
-        craftText:SetFont(ns.CYRILLIC_FONT, 16, "OUTLINE")
         craftTimer:SetScript("OnEvent", RefreshCraftTimer)
         local elapsedSinceUpdate = 0
         craftTimer:SetScript("OnUpdate", function(_, elapsed)
@@ -112,11 +117,11 @@ ns.On("PLAYER_LOGIN", ApplyCraftTimer)
 
 local recipes = {
     { key = "mooncloth", spell = 18560, profession = 197, name = "Луноткань", icon = 132895,
-        duration = 95 * 3600, frameName = "RainonUIForeverMooncloth", x = 0 },
+        duration = 95 * 3600 },
     { key = "arcanite", spell = 17187, profession = 171, name = "Арканитовый слиток", icon = 134459,
-        duration = 47 * 3600, frameName = "RainonUIForeverArcanite", x = 160 },
+        duration = 47 * 3600 },
 }
-local refreshPage, refreshTracker, nextReminder
+local refreshPage, refreshTracker, refreshReminder, nextReminder
 
 function ns.CurrentProfessionCharacter()
     local guid = UnitGUID("player")
@@ -126,18 +131,43 @@ function ns.CurrentProfessionCharacter()
     ns.db.characters[guid] = character
     character.professions = character.professions or {}
     character.name, character.realm = ns.CharacterIdentity()
+    local class = select(2, UnitClass("player"))
+    if not (issecretvalue and issecretvalue(class)) and class then character.class = class end
     return character
+end
+
+local function CooldownClass(character, guid, playerGUID, playerClass)
+    if character.class then return character.class end
+    if guid == playerGUID then return playerClass end
+    local class
+    if GetPlayerInfoByGUID and type(guid) == "string" and guid:match("^Player%-") then
+        class = select(2, GetPlayerInfoByGUID(guid))
+        if not (issecretvalue and issecretvalue(class)) and class then return class end
+    end
+    local api = Syndicator and Syndicator.API
+    if api and api.GetCharacter and character.realm then
+        local cached = api.GetCharacter(character.name .. "-" .. character.realm:gsub("%s+", ""))
+        local details = cached and cached.details
+        if details then return details.className end
+    end
 end
 
 local function CooldownEntries(now, characters)
     local entries = {}
-    for _, character in pairs(characters or {}) do
+    local playerGUID = UnitGUID("player")
+    local playerClass = select(2, UnitClass("player"))
+    if issecretvalue and issecretvalue(playerClass) then playerClass = nil end
+    for key, character in pairs(characters or {}) do
         if character.name and character.name ~= "" then
             for _, recipe in ipairs(recipes) do
                 local snapshot = character[recipe.key]
                 local readyAt = snapshot and ns.Number(snapshot.readyAt)
                 if readyAt then
-                    entries[#entries + 1] = { recipe = recipe, name = character.name, readyAt = readyAt }
+                    local class = CooldownClass(character, key, playerGUID, playerClass)
+                    character.class = class
+                    entries[#entries + 1] = {
+                        recipe = recipe, character = key, name = character.name, class = class, readyAt = readyAt,
+                    }
                 end
             end
         end
@@ -164,39 +194,18 @@ local function RefreshCooldowns()
             break
         end
     end
-    for _, recipe in ipairs(recipes) do
-        if recipe.frame then
-            local names = {}
-            if ns.Enabled(recipe.key) then
-                for _, entry in ipairs(entries) do
-                    if entry.recipe == recipe and entry.readyAt <= now then names[#names + 1] = entry.name end
-                end
-            end
-            recipe.readyNames = names
-            if names[1] then
-                local suffix = #names > 1 and (" +%d"):format(#names - 1) or ""
-                recipe.label:SetText(names[1] .. suffix .. "\n" .. recipe.name)
-            end
-            recipe.frame:SetShown(#names > 0)
-        end
-    end
     if refreshPage then refreshPage(entries, now) end
     if refreshTracker then refreshTracker(entries, now) end
+    if refreshReminder then refreshReminder(entries, now) end
 end
 
-
-local function RemainingText(readyAt, now)
-    local seconds = math.ceil(readyAt - now)
-    if seconds <= 0 then return "Готово" end
-    local minutes = math.ceil(seconds / 60)
-    if minutes >= 1440 then return ("%d д %d ч"):format(math.floor(minutes / 1440), math.floor(minutes / 60) % 24) end
-    if minutes >= 60 then return ("%d ч %02d мин"):format(math.floor(minutes / 60), minutes % 60) end
-    return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
+local function CooldownText(readyAt, now)
+    return readyAt <= now and "Готово" or date("%d.%m • %H:%M", math.ceil(readyAt))
 end
 
-local function BuildProfessionCooldownTracker(parent)
+local function BuildProfessionCooldownTracker(parent, heading)
     local tracker = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    tracker:SetWidth(262)
+    tracker:SetWidth(294)
     tracker:SetClampedToScreen(true)
     tracker:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -207,7 +216,7 @@ local function BuildProfessionCooldownTracker(parent)
     tracker:SetBackdropColor(0.08, 0.057, 0.035, 0.97)
     local title = tracker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -10)
-    title:SetText("Откаты профессий")
+    title:SetText(heading or "Откаты профессий")
     local empty = tracker:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     empty:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -9)
     empty:SetPoint("RIGHT", -12, 0)
@@ -218,49 +227,18 @@ local function BuildProfessionCooldownTracker(parent)
     scroll:SetPoint("TOPLEFT", 12, -31)
     scroll:SetPoint("BOTTOMRIGHT", -28, 9)
     local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(220, 1)
+    content:SetSize(254, 1)
     scroll:SetScrollChild(content)
     scroll:HookScript("OnScrollRangeChanged", function(_, _, range)
         scroll.ScrollBar:SetShown(range > 0)
         if scroll:GetVerticalScroll() > range then scroll:SetVerticalScroll(range) end
     end)
 
-    local rows, entries = {}, {}
-    local rowHeight = 31
-    local function UpdateTimes(now)
-        for i, entry in ipairs(entries) do
-            local status = rows[i].status
-            status:SetText(RemainingText(entry.readyAt, now))
-            if entry.readyAt <= now then
-                status:SetTextColor(0.45, 1, 0.45)
-            else
-                status:SetTextColor(1, 0.82, 0.38)
-            end
-        end
-    end
-
-    local elapsedSinceUpdate = 0
-    tracker:SetScript("OnUpdate", function(_, elapsed)
-        elapsedSinceUpdate = elapsedSinceUpdate + elapsed
-        if elapsedSinceUpdate < 1 then return end
-        elapsedSinceUpdate = 0
-        UpdateTimes(GetServerTime())
-    end)
-    tracker:HookScript("OnShow", function()
-        tracker:ClearAllPoints()
-        local right, left = parent:GetRight(), parent:GetLeft()
-        if right and GetScreenWidth() - right >= tracker:GetWidth() + 44 then
-            tracker:SetPoint("TOPLEFT", parent, "TOPRIGHT", 44, -6)
-        elseif left and left >= tracker:GetWidth() + 8 then
-            tracker:SetPoint("TOPRIGHT", parent, "TOPLEFT", -8, -6)
-        else
-            tracker:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -42, -44)
-        end
-    end)
+    local rows = {}
+    local rowHeight = 36
     tracker:Hide()
 
-    return tracker, function(newEntries, now)
-        entries = newEntries
+    return tracker, function(entries, now)
         empty:SetShown(#entries == 0)
         scroll:SetShown(#entries > 0)
         tracker:SetHeight(#entries == 0 and 76 or 40 + math.min(#entries, 6) * rowHeight)
@@ -269,31 +247,66 @@ local function BuildProfessionCooldownTracker(parent)
             if not row then
                 row = CreateFrame("Frame", nil, content)
                 rows[i] = row
-                row:SetSize(220, rowHeight)
+                row:SetSize(254, rowHeight)
                 row:SetPoint("TOPLEFT", 0, -(i - 1) * rowHeight)
                 row.icon = row:CreateTexture(nil, "ARTWORK")
                 row.icon:SetSize(23, 23)
                 row.icon:SetPoint("LEFT")
+                row.status = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                row.status:SetPoint("TOPRIGHT", 0, -4)
+                row.status:SetWidth(63)
+                row.status:SetJustifyH("RIGHT")
+                row.status:SetWordWrap(false)
+                row.status:SetFont(ns.CYRILLIC_FONT, 13, "")
+                row.day = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                row.day:SetPoint("BOTTOMRIGHT", 0, 4)
+                row.day:SetWidth(63)
+                row.day:SetJustifyH("RIGHT")
+                row.day:SetTextColor(0.8, 0.75, 0.68)
+
                 row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-                row.name:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 7, 2)
-                row.name:SetWidth(120)
+                row.name:SetPoint("TOPLEFT", 30, -4)
+                row.name:SetPoint("RIGHT", row.status, "LEFT", -10, 0)
+                row.name:SetFont(ns.CYRILLIC_FONT, 13, "")
                 row.name:SetJustifyH("LEFT")
                 row.name:SetWordWrap(false)
                 row.item = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                row.item:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 7, -1)
+                row.item:SetPoint("BOTTOMLEFT", 30, 4)
+                row.item:SetPoint("RIGHT", row.day, "LEFT", -10, 0)
+                row.item:SetJustifyH("LEFT")
+                row.item:SetFont(ns.CYRILLIC_FONT, 11, "")
                 row.item:SetTextColor(0.8, 0.75, 0.68)
-                row.status = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                row.status:SetPoint("TOPRIGHT", 0, -3)
+                row.item:SetWordWrap(false)
+
+                local separator = row:CreateTexture(nil, "ARTWORK")
+                separator:SetPoint("BOTTOMLEFT")
+                separator:SetPoint("BOTTOMRIGHT")
+                separator:SetHeight(1)
+                separator:SetColorTexture(0.82, 0.69, 0.47, 0.15)
             end
             row.icon:SetTexture(entry.recipe.icon)
             row.name:SetText(entry.name)
+            local color = entry.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[entry.class]
+            if color then
+                row.name:SetTextColor(color.r, color.g, color.b)
+            else
+                row.name:SetTextColor(1, 1, 1)
+            end
             row.item:SetText(entry.recipe.name)
+            local ready = entry.readyAt <= now
+            local readyAt = math.ceil(entry.readyAt)
+            row.status:SetText(ready and "Готово" or date("%H:%M", readyAt))
+            if ready then
+                row.status:SetTextColor(0.45, 1, 0.45)
+            else
+                row.status:SetTextColor(1, 0.82, 0.38)
+            end
+            row.day:SetText(date("%d.%m", readyAt))
             row:Show()
         end
         for i = #entries + 1, #rows do rows[i]:Hide() end
         content:SetHeight(math.max(1, #entries * rowHeight))
         scroll.ScrollBar:SetShown(#entries > 6)
-        UpdateTimes(now)
     end
 end
 
@@ -344,7 +357,7 @@ local function BuildCharacters(page, text, y)
             end
             row.name:SetText(entry.name)
             row.item:SetText(entry.recipe.name)
-            row.status:SetText(entry.readyAt <= now and "Готово" or date("%d.%m %H:%M", math.ceil(entry.readyAt)))
+            row.status:SetText(CooldownText(entry.readyAt, now))
             row:Show()
         end
         for i = #entries + 1, #rows do rows[i]:Hide() end
@@ -364,45 +377,87 @@ table.insert(ns.tabsAfterGeneral, {
     toggle = true, afterSettings = BuildCharacters,
 })
 
-local function BuildReminder(recipe)
-    local frame = CreateFrame("Frame", recipe.frameName, UIParent)
-    recipe.frame = frame
-    frame:SetSize(42, 42)
-    frame:SetClampedToScreen(true)
+local function PositionCooldownTracker(tracker, parent)
+    tracker:ClearAllPoints()
+    local right, left = parent:GetRight(), parent:GetLeft()
+    local gap = 60
+    if right and GetScreenWidth() - right >= tracker:GetWidth() + gap then
+        tracker:SetPoint("TOPLEFT", parent, "TOPRIGHT", gap, 0)
+    elseif left and left >= tracker:GetWidth() + 8 then
+        tracker:SetPoint("TOPRIGHT", parent, "TOPLEFT", -8, 0)
+    else
+        tracker:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -42, -44)
+    end
+end
+
+local function BuildReadyWindow(preview)
+    local frame, update = BuildProfessionCooldownTracker(UIParent, preview and "Откаты профессий — пример")
+    local positionKey = "professionReadyPosition"
+    local position = ns.db[positionKey]
+    if position then
+        frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", position.x, position.y)
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, -160)
+    end
+    frame:SetFrameStrata("DIALOG")
+    frame:SetToplevel(true)
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    local positionKey = recipe.key .. "Position"
-    local pos = ns.db[positionKey] or { recipe.x, -160 }
-    frame:SetPoint("CENTER", UIParent, "CENTER", pos[1], pos[2])
-    local icon = frame:CreateTexture(nil, "ARTWORK")
-    icon:SetAllPoints()
-    icon:SetTexture(recipe.icon)
-    local label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    recipe.label = label
-    label:SetPoint("TOP", frame, "BOTTOM", 0, -3)
-    label:SetFont(ns.CYRILLIC_FONT, 13, "OUTLINE")
-
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local x, y = self:GetCenter()
-        local cx, cy = UIParent:GetCenter()
-        ns.db[positionKey] = { x - cx, y - cy }
+        self:SetUserPlaced(false)
+        local left, top = self:GetLeft(), self:GetTop()
+        if not preview and left and top then
+            ns.db[positionKey] = {
+                x = left - (UIParent:GetLeft() or 0),
+                y = top - (UIParent:GetBottom() or 0),
+            }
+        end
     end)
-    frame:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-        GameTooltip:SetText(recipe.name .. " — можно изготовить")
-        for _, name in ipairs(recipe.readyNames) do GameTooltip:AddLine(name, 1, 1, 1) end
-        GameTooltip:Show()
-    end)
-    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame:HookScript("OnHide", frame.StopMovingOrSizing)
+    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", 0, 1)
+    return frame, update, close
+end
+
+local readyWindow, updateReady, visibleReady
+local function UpdateReadyWindow(entries, now)
+    local ready = {}
+    local dismissed = ns.db.professionReadyDismissed or {}
+    for _, entry in ipairs(entries) do
+        local key = entry.character .. ":" .. entry.recipe.key
+        if ns.Enabled(entry.recipe.key) and entry.readyAt <= now and dismissed[key] ~= entry.readyAt then
+            entry.reminderKey = key
+            ready[#ready + 1] = entry
+        end
+    end
+    visibleReady = ready
+    if #ready == 0 then
+        if readyWindow then readyWindow:Hide() end
+        return
+    end
+    if not readyWindow then
+        local close
+        readyWindow, updateReady, close = BuildReadyWindow(false)
+        close:SetScript("OnClick", function()
+            ns.db.professionReadyDismissed = ns.db.professionReadyDismissed or {}
+            for _, entry in ipairs(visibleReady) do
+                ns.db.professionReadyDismissed[entry.reminderKey] = entry.readyAt
+            end
+            readyWindow:Hide()
+        end)
+    end
+    updateReady(ready, now)
+    readyWindow:Show()
 end
 
 ns.AddSetting("mooncloth", "Готовность луноткани", RefreshCooldowns, true, "professions", { icon = recipes[1].icon })
 ns.AddSetting("arcanite", "Готовность арканита", RefreshCooldowns, true, "professions", { icon = recipes[2].icon })
 ns.On("PLAYER_LOGIN", function()
-    for _, recipe in ipairs(recipes) do BuildReminder(recipe) end
+    refreshReminder = UpdateReadyWindow
+    if ns.db.characters and ns.db.characters[UnitGUID("player")] then ns.CurrentProfessionCharacter() end
     RefreshCooldowns()
 end)
 
@@ -442,6 +497,7 @@ local function ReadCooldowns()
     end
 
     if not tracker then tracker, refreshTracker = BuildProfessionCooldownTracker(ProfessionsFrame) end
+    PositionCooldownTracker(tracker, ProfessionsFrame)
     tracker:Show()
     if trade.GetBaseProfessionInfo and trade.GetRecipeInfo
         and (not trade.IsTradeSkillReady or trade.IsTradeSkillReady()) then
@@ -456,7 +512,13 @@ local function ReadCooldowns()
                     local ok, remaining = pcall(ReadRecipeCooldown, trade, recipe)
                     if ok and remaining then
                         local now = GetServerTime()
-                        character[recipe.key] = { readyAt = now + remaining, at = now }
+                        local previous = character[recipe.key]
+                        local previousReadyAt = previous and ns.Number(previous.readyAt)
+                        local readyAt = now + remaining
+                        if remaining == 0 and previousReadyAt and previousReadyAt <= now then
+                            readyAt = previousReadyAt
+                        end
+                        character[recipe.key] = { readyAt = readyAt, at = now }
                     end
                 else
                     character[recipe.key] = nil
@@ -516,10 +578,29 @@ ns.On("UNIT_SPELLCAST_SUCCEEDED", function(unit, _, spell)
     end
 end)
 
-function ns.CreateProfessionCooldownPreview(parent)
-    local preview, update = BuildProfessionCooldownTracker(parent)
-    return function(characters, now)
-        update(CooldownEntries(now, characters), now)
-        preview:Show()
+local cooldownPreview, updateCooldownPreview, readyPreview, updateReadyPreview
+function ns.ShowProfessionCooldownPreview(characters, readyOnly)
+    local now = GetServerTime()
+    if readyOnly then
+        if not readyPreview then
+            local close
+            readyPreview, updateReadyPreview, close = BuildReadyWindow(true)
+            close:SetScript("OnClick", function() readyPreview:Hide() end)
+        end
+        if cooldownPreview then cooldownPreview:Hide() end
+        updateReadyPreview(CooldownEntries(now, characters), now)
+        readyPreview:Show()
+        return
     end
+    if not cooldownPreview then
+        local close
+        cooldownPreview, updateCooldownPreview, close = BuildReadyWindow(true)
+        close:SetScript("OnClick", function() cooldownPreview:Hide() end)
+    end
+    if readyPreview then readyPreview:Hide() end
+    if ProfessionsFrame and ProfessionsFrame:IsVisible() then
+        PositionCooldownTracker(cooldownPreview, ProfessionsFrame)
+    end
+    updateCooldownPreview(CooldownEntries(now, characters), now)
+    cooldownPreview:Show()
 end

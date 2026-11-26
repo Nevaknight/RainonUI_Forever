@@ -48,13 +48,18 @@ local function SetTooltip(button, title, detail)
     button:HookScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         GameTooltip:SetText(title)
-        if detail then GameTooltip:AddLine(detail, 1, 1, 1, true) end
+        local text = detail
+        if type(detail) == "function" then text = detail() end
+        if text then
+            GameTooltip:AddLine(text, 1, 1, 1, true)
+            if type(detail) == "function" then ns.UseCyrillicTooltipFont(GameTooltip) end
+        end
         GameTooltip:Show()
     end)
     button:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
-local function MakeEntry(button, title, detail, texture, atlas)
+local function MakeEntry(button, title, detail, texture, atlas, wrapTitle)
     button:SetHeight(54)
 
     -- Geometry of the square spellbook item in Blizzard_SpellBookItem.xml and ArtSet.Square.
@@ -96,6 +101,10 @@ local function MakeEntry(button, title, detail, texture, atlas)
     local centerY = detail and 9 or 1
     label:SetPoint("LEFT", 56, centerY)
     label:SetPoint("RIGHT", -rightPad, centerY)
+    if wrapTitle then
+        label:SetWordWrap(true)
+        label:SetMaxLines(detail and 1 or 2)
+    end
     if detail then
         local subtitle = BookText(button, "SystemFont_Med1", detail)
         subtitle:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -2)
@@ -109,7 +118,7 @@ local function MakeCheck(page, option, x, y, width, refresh)
     local check = CreateFrame("CheckButton", nil, page)
     check:SetWidth(width)
     check:SetPoint("TOPLEFT", x, y)
-    MakeEntry(check, style.title or option.label, style.detail, style.icon or 134400, style.atlas)
+    MakeEntry(check, style.title or option.label, style.detail, style.icon or 134400, style.atlas, style.wrapTitle)
 
     local box = check:CreateTexture(nil, "ARTWORK")
     box:SetTexture("Interface\\Buttons\\UI-CheckBox-Up")
@@ -566,16 +575,7 @@ function ns.BuildUpdateNotice(sections, option)
     divider:SetPoint("TOPLEFT", 25, -79)
     divider:SetPoint("TOPRIGHT", -25, -79)
 
-    local warning = BookText(window, "SystemFont_Med1",
-        "Эту же настройку можно изменить во вкладке «Общие».")
-    warning:SetTextColor(0.68, 0.06, 0.06)
-    local font, size = warning:GetFont()
-    warning:SetFont(font, size, "OUTLINE")
-    warning:SetPoint("TOPLEFT", 34, -101)
-    warning:SetWidth(412)
-    warning:SetWordWrap(true)
-
-    local y = -117 - warning:GetStringHeight()
+    local y = -101
     for _, section in ipairs(sections) do
         local title = BookText(window, "SystemFont_Large", section.title)
         title:SetPoint("TOPLEFT", 34, y)

@@ -73,11 +73,11 @@ end
 local panel, minimapButton
 local iconPath = "Interface\\AddOns\\RainonUI_Forever\\Media\\logo"
 
-function ns.PrintCombatMessage(message)
+function ns.PrintCombatMessage(message, alwaysShow)
     if not DEFAULT_CHAT_FRAME then return end
     local _, instanceType = IsInInstance()
     -- Like Ellesmere, keep these combat notices out of chat in raids and PvP instances.
-    if instanceType == "raid" or instanceType == "pvp" or instanceType == "arena" then return end
+    if not alwaysShow and (instanceType == "raid" or instanceType == "pvp" or instanceType == "arena") then return end
     DEFAULT_CHAT_FRAME:AddMessage("|cffff6060[RainonUI]|r " .. message)
 end
 
@@ -165,10 +165,18 @@ local function CreateMinimapButton()
     end
 
     button:SetScript("OnClick", function(self, mouseButton)
-        if mouseButton ~= "RightButton" then
+        if mouseButton == "LeftButton" then
+            if InCombatLockdown() then
+                if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+                ns.PrintCombatMessage("Сначала закончи бой.", true)
+                return
+            end
             if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") and IsShiftKeyDown() then
                 if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
                 ns.ToggleDungeonLootCatalog()
+            elseif ns.OpenBattleJournal and IsAltKeyDown() then
+                if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+                ns.OpenBattleJournal()
             else
                 ns.ToggleOptions()
             end
@@ -198,6 +206,7 @@ local function CreateMinimapButton()
         if ns.ItemNotesTab and ns.Enabled("itemNotes") then
             AddMinimapBinding("Shift + ПКМ", ns.ItemNotesTab.title)
         end
+        if ns.OpenBattleJournal then AddMinimapBinding("Alt + ЛКМ", "Журнал полей боя") end
         if ns.OpenLootTests then AddMinimapBinding("Alt + ПКМ", "Тестовые окна") end
         if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") then
             AddMinimapBinding("Shift + ЛКМ", "Добыча всех подземелий")
