@@ -176,7 +176,7 @@ local function CreateMinimapButton()
                 ns.ToggleDungeonLootCatalog()
             elseif ns.OpenBattleJournal and IsAltKeyDown() then
                 if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
-                ns.OpenBattleJournal()
+                if ns.Enabled("pvp") then ns.OpenBattleJournal() end
             else
                 ns.ToggleOptions()
             end
@@ -206,7 +206,9 @@ local function CreateMinimapButton()
         if ns.ItemNotesTab and ns.Enabled("itemNotes") then
             AddMinimapBinding("Shift + ПКМ", ns.ItemNotesTab.title)
         end
-        if ns.OpenBattleJournal then AddMinimapBinding("Alt + ЛКМ", "Журнал полей боя") end
+        if ns.OpenBattleJournal and ns.Enabled("pvp") then
+            AddMinimapBinding("Alt + ЛКМ", "Журнал полей боя")
+        end
         if ns.OpenLootTests then AddMinimapBinding("Alt + ПКМ", "Тестовые окна") end
         if ns.ToggleDungeonLootCatalog and ns.Enabled("dungeonLootCatalog") then
             AddMinimapBinding("Shift + ЛКМ", "Добыча всех подземелий")

@@ -634,17 +634,18 @@ function ns.BuildOptions(settings, extraOptions)
         end
     end
     local function RefreshTabs()
-        local slot = 0
+        local visibleTabs = {}
         for _, entry in ipairs(windowTabs) do
             local tab = tabButtons[entry.key]
             local visible = (not entry.toggle or ns.Enabled(entry.key))
                 and (not entry.feature or ns.Enabled(entry.feature))
-            if visible then
-                tab:ClearAllPoints()
-                tab:SetPoint("TOPLEFT", 73 + slot * 47, -37)
-                slot = slot + 1
-            end
+            if visible then visibleTabs[#visibleTabs + 1] = tab end
             tab:SetShown(visible)
+        end
+        local step = #visibleTabs > 1 and math.min(47, (window:GetWidth() - 125) / (#visibleTabs - 1)) or 47
+        for slot, tab in ipairs(visibleTabs) do
+            tab:ClearAllPoints()
+            tab:SetPoint("TOPLEFT", 73 + (slot - 1) * step, -37)
         end
         window:SelectTab(selectedKey)
     end
