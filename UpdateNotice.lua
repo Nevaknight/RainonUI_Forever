@@ -2,9 +2,11 @@ local _, ns = ...
 local feature = "updateNotice"
 
 -- Use the release version as the ID and leave sections empty for a release without news.
-local announcementID = "0.4.5"
+local announcementID = "0.5.0"
 local sections = {
-    { title = "ПвП", text = "Обновлены и улучшены удобства для ПвП" },
+    { title = "Таймеры полей боя", text = "Отсчёты до старта и захвата целей, прогноз победы в Арати и на Островах Чёрного Копья. Масштаб меняется стрелками в окне." },
+    { title = "Шрифт RainonUI", text = "В «Общих» можно выбрать стандартный шрифт или Ellesmere, если установлен EllesmereUI." },
+    { title = "ПвП", text = "Обновлены предупреждения о жетонах и расчёт побед и поражений до ранга." },
 }
 local window, checked
 local function VisibleSections()

@@ -30,6 +30,127 @@ function ns.Number(value)
 end
 
 ns.CYRILLIC_FONT = "Fonts\\FRIZQT___CYR.TTF"
+local sharedMedia = LibStub and LibStub("LibSharedMedia-3.0", true)
+local ellesmereFolder = "interface\\addons\\ellesmereui\\media\\fonts\\"
+local ellesmereFont
+local fontProbe = events:CreateFontString()
+local fonts = setmetatable({}, {__mode = "k"})
+local menuFonts = {}
+local function FontPathIsCyrillic(path)
+    return path and path:lower():find("cyr", 1, true)
+end
+
+local function SetFace(region, path, size, flags)
+    local ok, applied = pcall(region.SetFont, region, path, size, flags)
+    return ok and applied ~= false
+end
+
+local function ResolveEllesmereFont()
+    if not sharedMedia then return end
+    local fontType = sharedMedia.MediaType.FONT
+    local path = sharedMedia:HashTable(fontType).Expressway
+    if type(path) == "string" and path:lower():sub(1, #ellesmereFolder) == ellesmereFolder
+        and SetFace(fontProbe, path, 14, "") then
+        return path
+    end
+
+    -- Ellesmere registers Expressway without a locale mask. LibSharedMedia can reject it on ruRU.
+    local eui = _G.EllesmereUI
+    local file = eui and eui.FONT_FILES and eui.FONT_FILES.Expressway
+    if not (file and eui.MEDIA_PATH and eui.FONT_CYRILLIC and eui.FONT_CYRILLIC.Expressway) then return end
+    path = eui.MEDIA_PATH .. "fonts\\" .. file
+    if SetFace(fontProbe, path, 14, "") then return path end
+end
+
+function ns.HasEllesmereFont()
+    ellesmereFont = ellesmereFont or ResolveEllesmereFont()
+    return ellesmereFont ~= nil
+end
+
+function ns.UIFontChoice()
+    return ns.db and ns.db.uiFont == "ellesmere" and ns.HasEllesmereFont() and "ellesmere" or "standard"
+end
+
+local function UIFont(standard)
+    return ns.UIFontChoice() == "ellesmere" and ellesmereFont or standard
+end
+
+function ns.ApplyUIFont(region, size, flags)
+    if not region then return end
+    local path, currentSize, currentFlags = region:GetFont()
+    if not (size or currentSize) then return end
+    local original = fonts[region]
+    local standard = size and ns.CYRILLIC_FONT or (original and original[1]) or path or ns.CYRILLIC_FONT
+    -- Keep the stock parchment heading style, and use a Cyrillic face for normal text.
+    if not size and not original and not FontPathIsCyrillic(standard)
+        and not standard:lower():find("adobe", 1, true) then
+        standard = ns.CYRILLIC_FONT
+    end
+    size, flags = size or currentSize, flags or currentFlags or ""
+    fonts[region] = {standard, size, flags}
+    if not SetFace(region, UIFont(standard), size, flags) then SetFace(region, standard, size, flags) end
+    return region
+end
+
+function ns.CreateText(parent, ...)
+    return ns.ApplyUIFont(parent:CreateFontString(...))
+end
+
+function ns.CreateTextButton(parent, template)
+    local button = CreateFrame("Button", nil, parent, template)
+    ns.ApplyUIFont(button:GetFontString())
+    return button
+end
+
+function ns.ApplyMenuFont(region, size, flags)
+    if not region then return end
+    local _, currentSize, currentFlags = region:GetFont()
+    size, flags = size or currentSize, flags or currentFlags or ""
+    local path = UIFont(ns.CYRILLIC_FONT)
+    local key = ("%s:%s:%s"):format(path, size, flags)
+    local font = menuFonts[key]
+    if not font then
+        font = CreateFont("RainonUIForeverMenuFont" .. (#menuFonts + 1))
+        if not SetFace(font, path, size, flags) then SetFace(font, ns.CYRILLIC_FONT, size, flags) end
+        menuFonts[#menuFonts + 1] = font
+        menuFonts[key] = font
+    end
+    region:SetFontObject(font)
+    return font
+end
+
+function ns.SetupTextMenu(dropdown, generator)
+    ns.ApplyUIFont(dropdown.Text)
+    dropdown:SetupMenu(function(owner, menu)
+        generator(owner, menu)
+        local function StyleEntries(root)
+            for _, entry in root:EnumerateElementDescriptions() do
+                local region, original
+                entry:AddInitializer(function(button)
+                    region = button.fontString
+                    if not region then return end
+                    original = region:GetFontObject()
+                    ns.ApplyMenuFont(region)
+                end)
+                entry:AddResetter(function()
+                    if region and original then region:SetFontObject(original) end
+                    region, original = nil, nil
+                end)
+                if entry.EnumerateElementDescriptions then StyleEntries(entry) end
+            end
+        end
+        StyleEntries(menu)
+    end)
+end
+
+function ns.SetUIFontChoice(choice)
+    if choice == "ellesmere" and not ns.HasEllesmereFont() then return end
+    ns.db.uiFont = choice
+    for region, font in pairs(fonts) do
+        if not SetFace(region, UIFont(font[1]), font[2], font[3]) then SetFace(region, unpack(font)) end
+    end
+    if ns.RefreshBattleTimerLayout then ns.RefreshBattleTimerLayout() end
+end
 
 local tooltipFonts = setmetatable({}, { __mode = "k" })
 
@@ -41,8 +162,7 @@ local function RestoreTooltipFonts(tooltip)
     end
 end
 
-function ns.UseCyrillicTooltipFont(tooltip, referenceFont)
-    local line = _G[tooltip:GetName() .. "TextLeft" .. tooltip:NumLines()]
+local function StyleTooltipLine(tooltip, line, referenceFont)
     if not line then return end
     local fonts = tooltipFonts[tooltip]
     if not fonts then
@@ -53,7 +173,22 @@ function ns.UseCyrillicTooltipFont(tooltip, referenceFont)
     local font, size, flags = line:GetFont()
     fonts[line] = fonts[line] or { font, size, flags }
     if referenceFont then font, size, flags = referenceFont:GetFont() end
-    line:SetFont(ns.CYRILLIC_FONT, size, flags)
+    if not SetFace(line, UIFont(ns.CYRILLIC_FONT), size, flags) then
+        SetFace(line, ns.CYRILLIC_FONT, size, flags)
+    end
+end
+
+function ns.UseCyrillicTooltipFont(tooltip, referenceFont)
+    local line = _G[tooltip:GetName() .. "TextLeft" .. tooltip:NumLines()]
+    StyleTooltipLine(tooltip, line, referenceFont)
+end
+
+function ns.StyleTooltipLines(tooltip, first)
+    local prefix = tooltip:GetName() .. "Text"
+    for i = first or 1, tooltip:NumLines() do
+        StyleTooltipLine(tooltip, _G[prefix .. "Left" .. i])
+        StyleTooltipLine(tooltip, _G[prefix .. "Right" .. i])
+    end
 end
 
 local settings = {}
@@ -200,7 +335,7 @@ local function CreateMinimapButton()
     button:SetScript("OnHide", StopDragging)
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-        GameTooltip:SetText("RainonUI — Forever")
+        GameTooltip:SetText("RainonUI - Forever")
         AddMinimapBinding("ЛКМ", "Открыть настройки")
         if ns.OpenCurrentDungeonLoot then AddMinimapBinding("ПКМ", "Добыча текущего подземелья") end
         if ns.ItemNotesTab and ns.Enabled("itemNotes") then
@@ -214,6 +349,7 @@ local function CreateMinimapButton()
             AddMinimapBinding("Shift + ЛКМ", "Добыча всех подземелий")
         end
         AddMinimapBinding("Перетаскивание", "Переместить значок")
+        ns.StyleTooltipLines(GameTooltip)
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -227,6 +363,7 @@ ns.On("ADDON_LOADED", function(name)
     ns.isNewInstall = RainonUIForeverDB == nil
     RainonUIForeverDB = RainonUIForeverDB or {}
     ns.db = RainonUIForeverDB
+    if ns.db.uiFont == "expressway" then ns.db.uiFont = "ellesmere" end
     ns.db.features = ns.db.features or {}
     ns.db.rest = ns.db.rest or {}
     ns.db.restCharacters = ns.db.restCharacters or {}

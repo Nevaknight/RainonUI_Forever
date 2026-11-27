@@ -13,18 +13,18 @@ local weeklyQuests = {
         destinations = {
             {
                 journalKey = "Dire Maul: East", bossID = 11492,
-                ruRU = { dungeon = "Забытый город — восточное крыло", item = "Сквернитовое семя" },
-                enUS = { dungeon = "Dire Maul — East Wing", item = "Felvine Seed" },
+                ruRU = { dungeon = "Забытый город - восточное крыло", item = "Сквернитовое семя" },
+                enUS = { dungeon = "Dire Maul - East Wing", item = "Felvine Seed" },
             },
             {
                 journalKey = "Dire Maul: West", bossID = 11486,
-                ruRU = { dungeon = "Забытый город — западное крыло", item = "Древняя памятная реликвия" },
-                enUS = { dungeon = "Dire Maul — West Wing", item = "Ancient Memento" },
+                ruRU = { dungeon = "Забытый город - западное крыло", item = "Древняя памятная реликвия" },
+                enUS = { dungeon = "Dire Maul - West Wing", item = "Ancient Memento" },
             },
             {
                 journalKey = "Dire Maul: North", bossID = 11501,
-                ruRU = { dungeon = "Забытый город — северное крыло", item = "Розовенькое колечко с землекаменным алмазом" },
-                enUS = { dungeon = "Dire Maul — North Wing", item = "Earthstone Diamond Pinky Ring" },
+                ruRU = { dungeon = "Забытый город - северное крыло", item = "Розовенькое колечко с землекаменным алмазом" },
+                enUS = { dungeon = "Dire Maul - North Wing", item = "Earthstone Diamond Pinky Ring" },
             },
         },
     },
@@ -33,12 +33,12 @@ local weeklyQuests = {
         destinations = {
             {
                 journalKey = "Upper Blackrock Spire", bossID = 10363,
-                ruRU = { dungeon = "Вершина Черной горы — верхняя часть", item = "Помилование Нефари" },
+                ruRU = { dungeon = "Вершина Черной горы - верхняя часть", item = "Помилование Нефари" },
                 enUS = { dungeon = "Upper Blackrock Spire", item = "Remit" },
             },
             {
                 journalKey = "Lower Blackrock Spire", bossID = 9568,
-                ruRU = { dungeon = "Вершина Черной горы — нижняя часть", item = "Лицензия инспектора" },
+                ruRU = { dungeon = "Вершина Черной горы - нижняя часть", item = "Лицензия инспектора" },
                 enUS = { dungeon = "Lower Blackrock Spire", item = "Overseer's License" },
             },
             {
@@ -58,13 +58,13 @@ local weeklyQuests = {
             },
             {
                 journalKey = "Stratholme: Undead", bossID = 10440,
-                ruRU = { dungeon = "Стратхольм — часть нежити", item = "Записи о поставках зерна" },
-                enUS = { dungeon = "Stratholme — Undead Side", item = "Grain Shipment" },
+                ruRU = { dungeon = "Стратхольм - часть нежити", item = "Записи о поставках зерна" },
+                enUS = { dungeon = "Stratholme - Undead Side", item = "Grain Shipment" },
             },
             {
                 journalKey = "Stratholme: Living", bossID = 10813,
-                ruRU = { dungeon = "Стратхольм — живая часть", item = "Переписка Датроана" },
-                enUS = { dungeon = "Stratholme — Living Side", item = "Dathrohan's Correspondence" },
+                ruRU = { dungeon = "Стратхольм - живая часть", item = "Переписка Датроана" },
+                enUS = { dungeon = "Stratholme - Living Side", item = "Dathrohan's Correspondence" },
             },
         },
     },
@@ -208,8 +208,9 @@ local function CreateNavigatorMarker(location, map, canvas)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(location.name)
         GameTooltip:AddLine(location.description, 1, 1, 1)
-        GameTooltip:AddLine("ЛКМ — взять в цель и пометить (рядом)", 0.35, 1, 0.35, true)
-        GameTooltip:AddLine("ПКМ — убрать значок с карты", 1, 1, 1)
+        GameTooltip:AddLine("ЛКМ - взять в цель и пометить (рядом)", 0.35, 1, 0.35, true)
+        GameTooltip:AddLine("ПКМ - убрать значок с карты", 1, 1, 1)
+        ns.StyleTooltipLines(GameTooltip)
         GameTooltip:Show()
     end)
     marker:SetScript("OnLeave", HideTooltip)
@@ -303,6 +304,7 @@ local function CreateDungeonRow(parent)
     button:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(russian and "Открыть босса в журнале" or "Open boss in DungeonJournal")
+        ns.StyleTooltipLines(GameTooltip)
         GameTooltip:Show()
     end)
     local function HideTooltip(self)
@@ -311,7 +313,7 @@ local function CreateDungeonRow(parent)
     button:SetScript("OnLeave", HideTooltip)
     button:SetScript("OnHide", HideTooltip)
 
-    row.label = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    row.label = ns.CreateText(row, nil, "ARTWORK", "GameFontHighlightSmall")
     row.label:SetPoint("LEFT", button, "RIGHT", 6, 0)
     row.label:SetPoint("RIGHT")
     row.label:SetJustifyH("LEFT")
@@ -349,17 +351,17 @@ local function CreateReminder()
     end)
     window:HookScript("OnHide", window.StopMovingOrSizing)
 
-    local message = window:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    local message = ns.CreateText(window, nil, "ARTWORK", "GameFontHighlight")
     message:SetPoint("TOP", 0, -36)
     message:SetWidth(278)
 
-    local turnIn = window:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    local turnIn = ns.CreateText(window, nil, "ARTWORK", "GameFontHighlightSmall")
     turnIn:SetPoint("TOP", message, "BOTTOM", 0, -8)
     turnIn:SetWidth(278)
     turnIn:SetText(russian and "Сдай задание Пикс Ксиззикс." or "Turn in the quest to Pix Xizzix.")
     local rows = {}
 
-    local mapButton = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+    local mapButton = ns.CreateTextButton(window, "UIPanelButtonTemplate")
     mapButton:SetSize(160, 24)
     mapButton:SetPoint("BOTTOM", 0, 12)
     mapButton:SetText(russian and "Показать на карте" or "Show on Map")
@@ -436,6 +438,11 @@ local function CanCheckWeeklyQuests()
     return enteredWorld and ns.Enabled("questReminders") and UnitLevel("player") == 60
 end
 
+local function HideWeeklyDuringPlay()
+    local _, instanceType = IsInInstance()
+    return InCombatLockdown() or instanceType == "pvp" or instanceType == "arena"
+end
+
 local function RefreshReminder()
     if not CanCheckWeeklyQuests() then
         if reminder and not preview then reminder:Hide() end
@@ -460,7 +467,7 @@ local function RefreshReminder()
         dismissed = false
     end
     if preview then return end
-    if state and not dismissed then
+    if state and not dismissed and not HideWeeklyDuringPlay() then
         ns.GetWeeklyQuestReminder():ShowQuestReminder(state, readyToTurnIn)
     elseif reminder then
         reminder:Hide()
@@ -483,8 +490,13 @@ end, true, nil, { icon = 134944, detail = pix.description, tooltip = "Тольк
 
 ns.On("PLAYER_ENTERING_WORLD", function()
     enteredWorld = true
+    if not preview and reminder and HideWeeklyDuringPlay() then reminder:Hide() end
     ScheduleReminderRefresh()
 end)
+ns.On("PLAYER_REGEN_DISABLED", function()
+    if reminder and not preview then reminder:Hide() end
+end)
+ns.On("PLAYER_REGEN_ENABLED", RefreshReminder)
 ns.On("QUEST_LOG_UPDATE", ScheduleReminderRefresh)
 ns.On("PLAYER_LEVEL_UP", function(level)
     if level == 60 and enteredWorld and ns.Enabled("questReminders") then

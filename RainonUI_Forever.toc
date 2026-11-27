@@ -2,10 +2,14 @@
 ## Title: RainonUI_Forever
 ## Notes: RainonUI для World of Warcraft: Forever
 ## Author: Rainon
-## Version: 0.4.5
+## Version: 0.5.0
 ## IconTexture: Interface\AddOns\RainonUI_Forever\Media\logo
 ## SavedVariables: RainonUIForeverDB
-## OptionalDeps: Auctionator, Baganator, ForeverDungeonJournal, Questie, Syndicator
+## OptionalDeps: Auctionator, Baganator, EllesmereUI, ForeverDungeonJournal, Questie, Syndicator
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
 
 Core.lua
 Options.lua
@@ -25,6 +29,7 @@ QuestReminders.xml
 QuestReminders.lua
 Professions.lua
 Activity.lua
+BattleTimers.lua
 FloatingText.lua
 #@do-not-package@
 DungeonLootPreview.lua

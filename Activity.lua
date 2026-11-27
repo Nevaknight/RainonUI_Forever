@@ -151,7 +151,13 @@ local battlefields = {
     [30] = {name = "Альтеракская долина", mark = 20560, icon = 133308, Alliance = 730, Horde = 729},
     [2997] = {name = "Острова Чёрного Копья", mark = 274895, icon = 133279, Alliance = 2799, Horde = 2798},
 }
+
+function ns.IsForeverBattlefield(map)
+    return battlefields[map] ~= nil
+end
+
 local markOrder = {489, 529, 30, 2997}
+local rankMaps = {489, 529, 2997}
 local honorCurrency = 1792
 local allianceIcon = "Interface\\Icons\\Achievement_PVP_A_16"
 local alertColors = {{0.46, 1, 0.48}, {1, 0.30, 0.28}}
@@ -171,9 +177,10 @@ local function MarkCount(field)
     end
 end
 
-local function PvPAlert(key, icon, tier)
+local function PvPAlert(key, icon, tier, amount)
     return {key = key, icon = icon, color = alertColors[tier],
-        text = tier == 2 and "Потрать валюту!" or "Потратить валюту?"}
+        text = amount and ("%s %d / 30"):format(tier == 2 and "Потрать жетоны!" or "Жетоны", amount)
+            or (tier == 2 and "Потрать валюту!" or "Потратить валюту?")}
 end
 
 local function CheckAlert(guid, key, icon, amount, warningAt, urgentAt)
@@ -192,13 +199,23 @@ local function CheckAlert(guid, key, icon, amount, warningAt, urgentAt)
     end
 end
 
-local function CheckMarkAlerts()
+-- Mark reminders are rearmed on login. Bag events can fire repeatedly for one reward.
+local lastMarks = {}
+local function CheckMarkAlerts(enteringMap)
     if not PvPEnabled("pvpMarkAlert") then return end
-    local guid = UnitGUID("player")
-    if not guid then return end
     for _, map in ipairs(markOrder) do
         local field = battlefields[map]
-        CheckAlert(guid, field.mark, MarkIcon(field), MarkCount(field), 20, 25)
+        local amount = MarkCount(field)
+        if amount then
+            local previous = lastMarks[map]
+            lastMarks[map] = amount
+            if previous and amount < previous then ClearReminder(field.mark, true) end
+            local urgent = amount >= 25
+            if amount >= 20 and (not previous or previous < 20
+                or (urgent and (amount > previous or map == enteringMap))) then
+                QueueReminder(PvPAlert(field.mark, MarkIcon(field), urgent and 2 or 1, amount))
+            end
+        end
     end
 end
 
@@ -216,27 +233,30 @@ end
 function ns.ShowPvPAlertPreview(honor, urgent)
     local field = battlefields[529]
     local icon = honor and 2173919 or field.icon
-    QueueReminder(PvPAlert(honor and "honor" or field.mark, icon, urgent and 2 or 1), true)
+    QueueReminder(PvPAlert(honor and "honor" or field.mark, icon, urgent and 2 or 1,
+        not honor and (urgent and 25 or 20) or nil), true)
 end
 
 ns.AddSetting("pvpMarkAlert", "Лимит жетонов", function()
     if ns.Enabled("pvpMarkAlert") then
         CheckMarkAlerts()
     else
+        wipe(lastMarks)
         for _, map in ipairs(markOrder) do ClearReminder(battlefields[map].mark, true) end
     end
 end, true, "pvp", {
-    icon = battlefields[529].icon, tooltip = "Напоминания при 20 и 25 жетонах одного поля боя. Лимит — 30 жетонов.",
+    icon = battlefields[529].icon, tooltip = "От 20 жетонов - напоминание. От 25 - при каждом пополнении и при входе на это поле боя. Лимит - 30.",
 })
 ns.AddSetting("pvpHonorAlert", "Лимит чести", function()
     if ns.Enabled("pvpHonorAlert") then CheckHonorAlert() else ClearReminder("honor", true) end
 end, true, "pvp", {
     icon = 2173919, tooltip = "Напоминания при 20 000 и 23 000 очках чести.",
 })
-ns.On("PLAYER_LOGIN", function()
-    CheckMarkAlerts()
-    CheckHonorAlert()
+ns.On("PLAYER_ENTERING_WORLD", function()
+    local _, kind, _, _, _, _, _, map = GetInstanceInfo()
+    CheckMarkAlerts(kind == "pvp" and map)
 end)
+ns.On("PLAYER_LOGIN", function() CheckHonorAlert() end)
 ns.On("CURRENCY_DISPLAY_UPDATE", CheckHonorAlert)
 
 local active, entered, refreshJournal
@@ -283,7 +303,7 @@ end)
 local rankTimer
 local rankExitDelay = 5
 local function UpdateRankPoints(row, final)
-    if not PvPEnabled("battleLog") or not row or not row.rankBefore or row.guid ~= UnitGUID("player") then return end
+    if not PvPEnabled("battleLog") or not row or row.map == 30 or not row.rankBefore or row.guid ~= UnitGUID("player") then return end
     local total = ReadRankTotal()
     if not total or total < row.rankBefore then return end
     local points = total - row.rankBefore
@@ -396,7 +416,7 @@ local function SyncBattle()
     for i = #history, 1, -1 do
         if history[i].guid == guid then last = history[i]; break end
     end
-    local inBattle = ns.Enabled("battleLog") and kind == "pvp"
+    local inBattle = ns.Enabled("battleLog") and kind == "pvp" and ns.IsForeverBattlefield(map)
     local runtime = inBattle and GetBattlefieldInstanceRunTime and ns.Number(GetBattlefieldInstanceRunTime())
     local start = runtime and runtime > 0 and GetServerTime() - math.floor(runtime / 1000)
     if last and last.open and (not inBattle or last.map ~= map
@@ -425,7 +445,7 @@ local function SyncBattle()
     CancelRankCheck()
     if not last or not last.open then
         PauseBattle()
-        local progress = ReadRankProgress()
+        local progress = map ~= 30 and ReadRankProgress() or nil
         last = {guid = guid, name = ns.CharacterIdentity(), map = map, started = start,
             seconds = 0, honor = 0, rep = 0, open = true,
             recordedAt = GetServerTime(), rankBefore = progress and progress.total,
@@ -528,6 +548,7 @@ ns.On("BATTLEFIELDS_CLOSED", CloseGossip)
 ns.On("PLAYER_LEAVING_WORLD", CloseGossip)
 
 local function ApplyPvPSetting()
+    ns.SyncBattleTimers()
     if ns.Enabled("pvp") then
         CheckMarkAlerts()
         CheckHonorAlert()
@@ -535,6 +556,7 @@ local function ApplyPvPSetting()
         return
     end
 
+    wipe(lastMarks)
     if journal then journal:Hide() end
     CloseGossip()
     CancelRankCheck()
@@ -551,25 +573,13 @@ local function ApplyPvPSetting()
     end
 end
 
-ns.AddSetting("pvp", "Вкладка «PvP»", ApplyPvPSetting, false, "general", {
-    title = "PvP", detail = "Включать PvP", icon = allianceIcon,
+ns.AddSetting("pvp", "ПвП функции", ApplyPvPSetting, false, "general", {
+    icon = allianceIcon,
     tooltip = "При выключении скрывает вкладку и останавливает запись боёв, предупреждения и автодиалог.",
 })
 ns.tabsAfterGeneral = ns.tabsAfterGeneral or {}
 table.insert(ns.tabsAfterGeneral, {
     key = "pvp", title = "PvP", icon = allianceIcon, columns = 1, toggle = true,
-    afterSettings = function(page, _, y)
-        local button = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
-        button:SetSize(220, 26)
-        button:SetPoint("TOPLEFT", 8, y)
-        button:SetText("Журнал полей боя")
-        button:GetFontString():SetFont(ns.CYRILLIC_FONT, 14, "")
-        button:SetScript("OnClick", function()
-            if InCombatLockdown() then return end
-            page:GetParent():Hide()
-            ns.OpenBattleJournal()
-        end)
-    end,
 })
 ns.On("PLAYER_ENTERING_WORLD", SyncBattle)
 ns.On("PLAYER_LEAVING_WORLD", LeaveBattle)
@@ -640,7 +650,7 @@ local results = {
     win = {"Победа", 0.61, 0.87, 0.55},
     loss = {"Поражение", 1, 0.54, 0.49},
     draw = {"Ничья", 0.83, 0.77, 0.66},
-    unknown = {"—", 0.70, 0.65, 0.57},
+    unknown = {"-", 0.70, 0.65, 0.57},
 }
 local samples, sampleRank, page, character, battlefield, battleDate
 local characterFilter, battlefieldFilter, dateFilter
@@ -650,7 +660,14 @@ local tableWidth = 0
 for _, column in ipairs(columns) do tableWidth = tableWidth + column.width end
 
 local function History()
-    return samples or ns.db.battleHistory or {}
+    if samples then return samples end
+    local history = {}
+    for _, row in ipairs(ns.db.battleHistory or {}) do
+        if row.map == nil or ns.IsForeverBattlefield(row.map) then
+            history[#history + 1] = row
+        end
+    end
+    return history
 end
 
 local function CharacterKey(row)
@@ -728,12 +745,12 @@ end
 local function Points(points)
     local whole = math.floor(math.abs(points) + 0.5)
     local digits = tostring(whole):reverse():gsub("(%d%d%d)", "%1 "):reverse():gsub("^ ", "")
-    return points < 0 and whole > 0 and ("−" .. digits) or digits
+    return points < 0 and whole > 0 and ("-" .. digits) or digits
 end
 
 local function JournalText(parent, size, r, g, b)
-    local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetFont(ns.CYRILLIC_FONT, size, "")
+    local label = ns.CreateText(parent, nil, "OVERLAY", "GameFontHighlight")
+    ns.ApplyUIFont(label, size, "")
     label:SetTextColor(r, g, b)
     return label
 end
@@ -781,6 +798,11 @@ local function MakeRow(window, index)
     line:SetHeight(1)
     line:SetColorTexture(0.67, 0.51, 0.28, 0.20)
     row.cells = MakeCells(row)
+    row.markIcon = row:CreateTexture(nil, "ARTWORK")
+    row.markIcon:SetSize(16, 16)
+    row.markIcon:SetPoint("LEFT", row.cells.marks, "LEFT", 14, 0)
+    row.markCount = JournalText(row, 14, 0.96, 0.93, 0.85)
+    row.markCount:SetPoint("LEFT", row.markIcon, "RIGHT", 5, 0)
     row.cells.time:SetTextColor(1, 1, 1)
     row.cells.rank:SetTextColor(1, 1, 1)
     row.cells.rep:SetTextColor(1, 1, 1)
@@ -821,27 +843,29 @@ local function DrawRow(row, entry)
     cells.result:SetText(result[1])
     cells.result:SetTextColor(unpack(result, 2))
     cells.time:SetText(Duration(Elapsed(entry)))
-    cells.rank:SetText(entry.rankPoints and Points(entry.rankPoints) or "—")
+    cells.rank:SetText(entry.map ~= 30 and entry.rankPoints and Points(entry.rankPoints) or "-")
     cells.rep:SetText(Points(entry.rep))
     cells.honor:SetText(Points(entry.honor))
     local field = battlefields[entry.map]
     if field and entry.marks ~= nil then
         local icon = samples and field.icon or MarkIcon(field)
-        cells.marks:SetFormattedText("|T%d:16:16|t %s", icon, Points(entry.marks))
+        cells.marks:SetText("")
+        row.markIcon:SetTexture(icon)
+        row.markIcon:Show()
+        row.markCount:SetText(Points(entry.marks))
+        row.markCount:Show()
     else
-        cells.marks:SetText("—")
+        row.markIcon:Hide()
+        row.markCount:Hide()
+        cells.marks:SetText("-")
     end
 end
-
-local menuFont = CreateFont("RainonUIForeverBattleJournalMenuFont")
-menuFont:SetFont(ns.CYRILLIC_FONT, 14, "")
 
 local function AddFilter(window, x, width, allText, selected, onSelect, keyFor, nameFor, compare)
     local dropdown = CreateFrame("DropdownButton", nil, window, "WowStyle1DropdownTemplate")
     dropdown:SetPoint("TOPLEFT", x, -35)
     dropdown:SetSize(width, 28)
-    if dropdown.Text then dropdown.Text:SetFontObject(menuFont) end
-    dropdown:SetupMenu(function(_, menu)
+    ns.SetupTextMenu(dropdown, function(_, menu)
         local function AddChoice(key, label)
             local option = menu:CreateRadio(label, function() return selected() == key end, function()
                 onSelect(key)
@@ -849,7 +873,7 @@ local function AddFilter(window, x, width, allText, selected, onSelect, keyFor, 
                 refreshJournal()
             end)
             option:AddInitializer(function(button)
-                button.fontString:SetFontObject(menuFont)
+                ns.ApplyMenuFont(button.fontString, 14, "")
                 return button.fontString:GetUnboundedStringWidth() + 36, 24
             end)
         end
@@ -882,24 +906,39 @@ local function RankTitle(rank, faction)
     return ("Ранг %d"):format(rank)
 end
 
-local function EstimateMatches(history, guid, map, progress)
+local function EstimateMatches(history, guid, progress)
     local remaining = progress.cap - progress.total
-    if remaining <= 0 then return 0, 0 end
-    local totals, counts = {win = 0, loss = 0}, {win = 0, loss = 0}
+    local byMap = {}
+    for _, map in ipairs(rankMaps) do byMap[map] = {} end
     for _, row in ipairs(history) do
-        local outcome = row.result
+        local map, outcome = byMap[row.map], row.result
         local gain = row.rankPoints
         -- A payout at the cap can be smaller than the match's normal reward.
-        if (not guid or row.guid == guid) and (not map or row.map == map)
-            and counts[outcome] ~= nil and gain and gain > 0
+        if map and (not guid or row.guid == guid) and (outcome == "win" or outcome == "loss")
+            and gain and gain > 0
             and (not row.rankCap or not row.rankBefore or row.rankBefore + gain < row.rankCap) then
-            totals[outcome] = totals[outcome] + gain
-            counts[outcome] = counts[outcome] + 1
+            local stats = map[outcome] or {total = 0, count = 0}
+            stats.total, stats.count = stats.total + gain, stats.count + 1
+            map[outcome] = stats
         end
     end
-    local wins = counts.win > 0 and math.ceil(remaining * counts.win / totals.win) or nil
-    local losses = counts.loss > 0 and math.ceil(remaining * counts.loss / totals.loss) or nil
-    return wins, losses
+    local best, estimates = {}, {}
+    for _, id in ipairs(rankMaps) do
+        local counts = {map = id}
+        estimates[#estimates + 1] = counts
+        for _, outcome in ipairs({"win", "loss"}) do
+            local stats = byMap[id][outcome]
+            local count = remaining <= 0 and 0 or (stats and math.ceil(remaining * stats.count / stats.total))
+            counts[outcome] = count
+            if count and (not best[outcome] or count < best[outcome]) then best[outcome] = count end
+        end
+    end
+    table.sort(estimates, function(a, b)
+        local aw, bw = a.win or math.huge, b.win or math.huge
+        if aw ~= bw then return aw < bw end
+        return a.map < b.map
+    end)
+    return best, estimates
 end
 
 local function BuildRankPanel(window)
@@ -908,7 +947,7 @@ local function BuildRankPanel(window)
     pane:SetPoint("TOPRIGHT", window, "TOPLEFT", -rankPanelGap, 0)
     pane:SetPoint("BOTTOMRIGHT", window, "BOTTOMLEFT", -rankPanelGap, 0)
     pane:EnableMouse(true)
-    pane.TitleContainer.TitleText:SetFont(ns.CYRILLIC_FONT, 14, "")
+    ns.ApplyUIFont(pane.TitleContainer.TitleText, 14, "")
     pane.TitleContainer.TitleText:SetText("Ранг PvP")
     Fill(pane.Bg, 0.105, 0.08, 0.06, 1)
     local ring = CreateFrame("Cooldown", nil, pane)
@@ -954,6 +993,27 @@ local function BuildRankPanel(window)
     local progressText = JournalText(bar, 12, 1, 1, 1)
     progressText:SetPoint("CENTER")
     local estimates = Line(-212, 13, 0.96, 0.92, 0.83)
+    local estimateHover = CreateFrame("Frame", nil, pane)
+    estimateHover:SetAllPoints(estimates)
+    estimateHover:EnableMouse(true)
+    local sortedEstimates, targetRank
+    local function ShowEstimates()
+        if not sortedEstimates then return end
+        GameTooltip:SetOwner(estimateHover, "ANCHOR_CURSOR")
+        GameTooltip:SetText(("До ранга %d"):format(targetRank))
+        GameTooltip:AddDoubleLine("Поле боя", "Побед / Поражений")
+        for _, counts in ipairs(sortedEstimates) do
+            GameTooltip:AddDoubleLine(battlefields[counts.map].name,
+                ("%s / %s"):format(counts.win and Points(counts.win) or "-", counts.loss and Points(counts.loss) or "-"))
+        end
+        ns.StyleTooltipLines(GameTooltip)
+        GameTooltip:Show()
+    end
+    estimateHover:SetScript("OnEnter", ShowEstimates)
+    estimateHover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    estimateHover:SetScript("OnHide", function()
+        if GameTooltip:IsOwned(estimateHover) then GameTooltip:Hide() end
+    end)
 
     local function Section(label, y)
         local divider = pane:CreateTexture(nil, "OVERLAY")
@@ -993,12 +1053,12 @@ local function BuildRankPanel(window)
         local honor = not samples and C_CurrencyInfo.GetCurrencyInfo(honorCurrency)
         local quantity = honor and ns.Number(honor.quantity) or preview and preview.honor
         honorRow.icon:SetTexture(honor and honor.iconFileID or 2173919)
-        honorRow.amount:SetText(quantity and Points(quantity) or "—")
+        honorRow.amount:SetText(quantity and Points(quantity) or "-")
         for _, map in ipairs(markOrder) do
             local row, field = markRows[map], battlefields[map]
             local count = not samples and MarkCount(field) or preview and preview.marks[field.mark]
             row.icon:SetTexture(samples and field.icon or MarkIcon(field))
-            row.amount:SetText(count and Points(count) or "—")
+            row.amount:SetText(count and Points(count) or "-")
         end
     end
 
@@ -1059,11 +1119,11 @@ local function BuildRankPanel(window)
                 local value = math.max(0, math.min(cap, standing - start))
                 row.bar:SetMinMaxValues(0, cap)
                 row.bar:SetValue(value)
-                row.value:SetFormattedText("%s%s / %s", label and label .. "  ·  " or "", Points(value), Points(cap))
+                row.value:SetFormattedText("%s%s / %s", label and label .. " - " or "", Points(value), Points(cap))
             else
                 row.bar:SetMinMaxValues(0, 1)
                 row.bar:SetValue(0)
-                row.value:SetText("—")
+                row.value:SetText("-")
             end
         end
     end
@@ -1079,6 +1139,7 @@ local function BuildRankPanel(window)
             caption:SetText("")
             bar:Hide()
             estimates:SetText("")
+            estimateHover:Hide()
             return
         end
         local faction = progress.faction or (not samples and UnitFactionGroup("player"))
@@ -1091,27 +1152,32 @@ local function BuildRankPanel(window)
         end
         local title = RankTitle(progress.level, faction)
         local level = ("Ранг %d"):format(progress.level)
-        rank:SetText(progress.level <= 0 and title or (title == level and level or (level .. " · " .. title)))
+        rank:SetText(progress.level <= 0 and title or (title == level and level or (level .. " - " .. title)))
         if progress.nextRank and progress.nextRank > 0 then
             points:SetFormattedText("До нового ранга  %s / %s", Points(progress.points), Points(progress.nextRank))
         else
             points:SetFormattedText("Очки ранга  %s", Points(progress.total))
         end
         local cap = progress.cap
-        if not cap or cap <= 0 then
+        if not cap or cap <= 0 or not progress.capRank then
             caption:SetText("Предел недели недоступен")
             bar:Hide()
             estimates:SetText("")
+            estimateHover:Hide()
             return
         end
-        caption:SetFormattedText("Предел недели · ранг %d", progress.capRank)
+        caption:SetFormattedText("Предел недели - ранг %d", progress.capRank)
         bar:SetMinMaxValues(0, cap)
         bar:SetValue(math.min(progress.total, cap))
         progressText:SetFormattedText("%s / %s", Points(progress.total), Points(cap))
         bar:Show()
         local guid = not samples and UnitGUID("player") or nil
-        local wins, losses = EstimateMatches(History(), guid, battlefield, progress)
-        estimates:SetFormattedText("Побед %s   ·   Поражений %s", wins and Points(wins) or "—", losses and Points(losses) or "—")
+        local best, sorted = EstimateMatches(History(), guid, progress)
+        sortedEstimates, targetRank = sorted, progress.capRank
+        estimates:SetFormattedText("Побед %s   /   Поражений %s", best.win and Points(best.win) or "-",
+            best.loss and Points(best.loss) or "-")
+        estimateHover:Show()
+        if GameTooltip:IsOwned(estimateHover) then ShowEstimates() end
 
     end
 
@@ -1147,7 +1213,7 @@ local function BuildJournal()
     local window, close = ns.CreateLootPanel("RainonUIForeverBattleJournal", "Журнал полей боя", tableWidth + 32, tableTop + 2 * rowHeight + 16)
     window:SetPoint("CENTER")
     local rankPanel, refreshRankPanel, shownRankPanel
-    window.TitleContainer.TitleText:SetFont(ns.CYRILLIC_FONT, 15, "")
+    ns.ApplyUIFont(window.TitleContainer.TitleText, 15, "")
     window:SetMovable(true)
     local title = window.TitleContainer
     title:EnableMouse(true)
@@ -1302,7 +1368,7 @@ function ns.OpenBattleJournal(preview, previewRank)
     samples, sampleRank = preview, previewRank
     if not samples then FillHistoricalResults() end
     journal = journal or BuildJournal()
-    journal.TitleContainer.TitleText:SetText(samples and "Журнал полей боя — пример" or "Журнал полей боя")
+    journal.TitleContainer.TitleText:SetText(samples and "Журнал полей боя - пример" or "Журнал полей боя")
     if journal:IsShown() then journal:Hide() end
     journal:Show()
     characterFilter:GenerateMenu()

@@ -85,6 +85,7 @@ local function AddRanks(tooltip, data)
     end)
     tooltip:AddLine(" ")
     tooltip:AddLine("RainonUI: трекер по wowtbc", 1, 0.82, 0)
+    ns.UseCyrillicTooltipFont(tooltip)
     for _, spec in ipairs(ordered) do AddSpecLine(tooltip, spec, itemRanks[spec]) end
 end
 
@@ -307,7 +308,7 @@ local function CreatePanel()
     panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
     tinsert(UISpecialFrames, panel:GetName())
 
-    panel.dungeonTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    panel.dungeonTitle = ns.CreateText(panel, nil, "OVERLAY", "GameFontNormalLarge")
     local title = panel.dungeonTitle
     title:SetPoint("TOPLEFT", 14, -34)
     title:SetPoint("TOPRIGHT", -14, -34)
@@ -321,7 +322,7 @@ local function CreatePanel()
     local filterTop = 72
     filterRow:SetPoint("TOPLEFT", 14, -filterTop)
     filterRow:SetPoint("TOPRIGHT", -16, -filterTop)
-    local filterLabel = filterRow:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    local filterLabel = ns.CreateText(filterRow, nil, "OVERLAY", "GameFontHighlight")
     filterLabel:SetText("В")
     local filterHeight = 24 + math.floor(filterLabel:GetStringHeight() / 2 + 0.5)
     filterRow:SetHeight(filterHeight)
@@ -345,7 +346,7 @@ local function CreatePanel()
     divider:SetPoint("TOPRIGHT", filterRow, "BOTTOMRIGHT", 4, -6)
     local scrollGap, bottomPadding = 16, 12
     windowPadding = filterTop + filterHeight + scrollGap + bottomPadding
-    bossFilter:SetupMenu(function(_, menu)
+    ns.SetupTextMenu(bossFilter, function(_, menu)
         if not bossEntries then return end
         local dungeon, journal = displayedDungeon, displayedJournal
         local reset = menu:CreateButton("Сбросить фильтр", function()
@@ -384,7 +385,7 @@ local function CreatePanel()
                 RenderDungeon()
             end)
             option:AddInitializer(function(button)
-                button.fontString:SetFontObject(entryFont)
+                ns.ApplyMenuFont(button.fontString)
                 local icon = button:AttachTexture()
                 button.rainonBossIcon = icon
                 icon:SetSize(20, 20)
@@ -400,7 +401,7 @@ local function CreatePanel()
             end)
         end
     end)
-    empty = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    empty = ns.CreateText(panel, nil, "OVERLAY", "GameFontHighlight")
     empty:SetPoint("TOPLEFT", filterRow, "BOTTOMLEFT", 0, -25)
     empty:SetPoint("RIGHT", -14, 0)
     empty:SetJustifyH("LEFT")
@@ -434,7 +435,7 @@ end
 
 local function CreateRow()
     local row = CreateFrame("Frame", nil, content)
-    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    row.name = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlight")
     row.name:SetPoint("TOPLEFT", 0, -2)
     row.name:SetJustifyH("LEFT")
     row.bossButton = CreateFrame("Button", nil, row)
@@ -474,7 +475,7 @@ local function CreateItem(row)
     badge:SetColorTexture(0.08, 0.06, 0.04, 0.92)
     badge:SetSize(17, 16)
     badge:SetPoint("BOTTOMRIGHT", 1, -1)
-    button.rank = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall", 2)
+    button.rank = ns.CreateText(button, nil, "OVERLAY", "GameFontNormalSmall", 2)
     button.rank:SetPoint("CENTER", badge)
     button.rank:SetTextColor(1, 0.89, 0.65)
     button.check = button:CreateTexture(nil, "OVERLAY", nil, 2)

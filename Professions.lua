@@ -72,9 +72,9 @@ function ns.CreateTimerBox()
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
     })
     box:SetBackdropColor(0.04, 0.03, 0.02, 0.94)
-    local label = box:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local label = ns.CreateText(box, nil, "OVERLAY", "GameFontNormalLarge")
     label:SetPoint("CENTER")
-    label:SetFont(ns.CYRILLIC_FONT, 16, "OUTLINE")
+    ns.ApplyUIFont(label, 16, "OUTLINE")
     return box, label
 end
 
@@ -200,7 +200,7 @@ local function RefreshCooldowns()
 end
 
 local function CooldownText(readyAt, now)
-    return readyAt <= now and "Готово" or date("%d.%m • %H:%M", math.ceil(readyAt))
+    return readyAt <= now and "Готово" or date("%d.%m - %H:%M", math.ceil(readyAt))
 end
 
 local function BuildProfessionCooldownTracker(parent, heading)
@@ -214,10 +214,10 @@ local function BuildProfessionCooldownTracker(parent, heading)
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
     })
     tracker:SetBackdropColor(0.08, 0.057, 0.035, 0.97)
-    local title = tracker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local title = ns.CreateText(tracker, nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -10)
     title:SetText(heading or "Откаты профессий")
-    local empty = tracker:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local empty = ns.CreateText(tracker, nil, "OVERLAY", "GameFontHighlightSmall")
     empty:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -9)
     empty:SetPoint("RIGHT", -12, 0)
     empty:SetJustifyH("LEFT")
@@ -252,29 +252,29 @@ local function BuildProfessionCooldownTracker(parent, heading)
                 row.icon = row:CreateTexture(nil, "ARTWORK")
                 row.icon:SetSize(23, 23)
                 row.icon:SetPoint("LEFT")
-                row.status = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                row.status = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlight")
                 row.status:SetPoint("TOPRIGHT", 0, -4)
                 row.status:SetWidth(63)
                 row.status:SetJustifyH("RIGHT")
                 row.status:SetWordWrap(false)
-                row.status:SetFont(ns.CYRILLIC_FONT, 13, "")
-                row.day = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                ns.ApplyUIFont(row.status, 13, "")
+                row.day = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlightSmall")
                 row.day:SetPoint("BOTTOMRIGHT", 0, 4)
                 row.day:SetWidth(63)
                 row.day:SetJustifyH("RIGHT")
                 row.day:SetTextColor(0.8, 0.75, 0.68)
 
-                row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+                row.name = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlight")
                 row.name:SetPoint("TOPLEFT", 30, -4)
                 row.name:SetPoint("RIGHT", row.status, "LEFT", -10, 0)
-                row.name:SetFont(ns.CYRILLIC_FONT, 13, "")
+                ns.ApplyUIFont(row.name, 13, "")
                 row.name:SetJustifyH("LEFT")
                 row.name:SetWordWrap(false)
-                row.item = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                row.item = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlightSmall")
                 row.item:SetPoint("BOTTOMLEFT", 30, 4)
                 row.item:SetPoint("RIGHT", row.day, "LEFT", -10, 0)
                 row.item:SetJustifyH("LEFT")
-                row.item:SetFont(ns.CYRILLIC_FONT, 11, "")
+                ns.ApplyUIFont(row.item, 11, "")
                 row.item:SetTextColor(0.8, 0.75, 0.68)
                 row.item:SetWordWrap(false)
 
@@ -391,7 +391,7 @@ local function PositionCooldownTracker(tracker, parent)
 end
 
 local function BuildReadyWindow(preview)
-    local frame, update = BuildProfessionCooldownTracker(UIParent, preview and "Откаты профессий — пример")
+    local frame, update = BuildProfessionCooldownTracker(UIParent, preview and "Откаты профессий - пример")
     local positionKey = "professionReadyPosition"
     local position = ns.db[positionKey]
     if position then

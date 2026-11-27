@@ -36,7 +36,7 @@ local columnWidth, columnStep = 222, 242
 local firstRow, rowStep = -75, 68
 
 local function BookText(parent, font, text)
-    local label = parent:CreateFontString(nil, "OVERLAY", font)
+    local label = ns.CreateText(parent, nil, "OVERLAY", font)
     label:SetTextColor(unpack(ink))
     label:SetShadowOffset(0, 0)
     label:SetJustifyH("LEFT")
@@ -52,8 +52,8 @@ local function SetTooltip(button, title, detail)
         if type(detail) == "function" then text = detail() end
         if text then
             GameTooltip:AddLine(text, 1, 1, 1, true)
-            if type(detail) == "function" then ns.UseCyrillicTooltipFont(GameTooltip) end
         end
+        ns.StyleTooltipLines(GameTooltip)
         GameTooltip:Show()
     end)
     button:HookScript("OnLeave", function() GameTooltip:Hide() end)
@@ -170,16 +170,16 @@ end
 
 local numberColors = { { "signed", "По знаку" }, { "stat", "Цвет характеристики" }, { "line", "Цвет строки" } }
 
-local function SettingsDropdown(page, check)
+local function SettingsDropdown(page, anchor, y)
     local dropdown = CreateFrame("DropdownButton", nil, page, "WowStyle1DropdownTemplate")
-    dropdown:SetPoint("TOPLEFT", check, "TOPLEFT", columnStep + 8, -12)
+    dropdown:SetPoint("TOPLEFT", anchor, "TOPLEFT", columnStep + 8, y or -12)
     dropdown:SetSize(206, 26)
     return dropdown
 end
 
 local function FlightSoundOptions(page, check)
     local dropdown = SettingsDropdown(page, check)
-    dropdown:SetupMenu(function(_, menu)
+    ns.SetupTextMenu(dropdown, function(_, menu)
         for _, sound in ipairs(ns.FlightArrivalSounds) do
             local key, title = sound[1], sound[2]
             menu:CreateRadio(title, function()
@@ -194,7 +194,7 @@ end
 
 local function NumberOptions(page, check)
     local dropdown = SettingsDropdown(page, check)
-    dropdown:SetupMenu(function(_, menu)
+    ns.SetupTextMenu(dropdown, function(_, menu)
         for _, entry in ipairs(numberColors) do
             local key, title = entry[1], entry[2]
             local option = menu:CreateRadio(title, function() return ns.StatNumberColor() == key end, function()
@@ -205,7 +205,7 @@ local function NumberOptions(page, check)
                 local lineHeight = titleText:GetHeight()
                 row.leftTexture1:SetPoint("LEFT", -3, (lineHeight + 1) / 2)
                 local example = row:AttachFontString()
-                example:SetFont(titleText:GetFont())
+                example:SetFontObject(ns.ApplyMenuFont(titleText))
                 example:SetHeight(lineHeight)
                 example:SetJustifyH("LEFT")
                 example:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 0, -1)
@@ -311,7 +311,7 @@ local function AddSpellOptions(menu, spells, selected, choose)
             choose(key)
         end)
         option:AddInitializer(function(row)
-            row.fontString:SetFontObject(GameFontHighlight)
+            ns.ApplyMenuFont(row.fontString)
             local icon = row:AttachTexture()
             icon:SetSize(20, 20)
             icon:SetPoint("LEFT", row.fontString, "RIGHT", 6, 0)
@@ -322,7 +322,7 @@ local function AddSpellOptions(menu, spells, selected, choose)
 end
 
 local function SavePaladinMacro(name, iconID, body, legacySpell)
-    local prefix = "RainonUI — Forever: "
+    local prefix = "RainonUI - Forever: "
     if InCombatLockdown() then
         DEFAULT_CHAT_FRAME:AddMessage(prefix .. "Выйди из боя, чтобы создать или обновить макрос.")
         return
@@ -390,7 +390,7 @@ local function BuildMacrosPage(page)
     description:SetWidth(447)
     description:SetWordWrap(true)
 
-    local button = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+    local button = ns.CreateTextButton(page, "UIPanelButtonTemplate")
     button:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -14)
     button:SetSize(macroButtonWidth, 24)
     button:SetText("Создать макрос")
@@ -423,7 +423,7 @@ local function BuildMacrosPage(page)
     menu:HookScript("OnSizeChanged", ResizeSealMenus)
     ResizeSealMenus(menu, menu:GetWidth())
 
-    local sealButton = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
+    local sealButton = ns.CreateTextButton(page, "UIPanelButtonTemplate")
     sealButton:SetPoint("TOPLEFT", sealMenus[1], "BOTTOMLEFT", 0, -14)
     sealButton:SetSize(macroButtonWidth, 24)
     sealButton:SetText("Создать макрос печатей")
@@ -447,7 +447,7 @@ local function BuildMacrosPage(page)
         sealButton:SetEnabled(seals[selectedSeals[1]] ~= nil and seals[selectedSeals[2]] ~= nil)
     end
 
-    menu:SetupMenu(function(_, root)
+    ns.SetupTextMenu(menu, function(_, root)
         AddSpellOptions(root, spells, function() return selected end, function(name)
             selected = name
             RefreshSelection()
@@ -455,7 +455,7 @@ local function BuildMacrosPage(page)
     end)
     for index, dropdown in ipairs(sealMenus) do
         local slot = index
-        dropdown:SetupMenu(function(_, root)
+        ns.SetupTextMenu(dropdown, function(_, root)
             AddSpellOptions(root, seals, function() return selectedSeals[slot] end, function(id)
                 selectedSeals[slot] = id
                 ns.db.macroSeals = { selectedSeals[1], selectedSeals[2] }
@@ -506,6 +506,7 @@ function ns.CreateLootPanel(name, title, width, height)
     window:SetToplevel(true)
     window:EnableMouse(true)
     window.TitleContainer.TitleText:SetText(title)
+    ns.ApplyUIFont(window.TitleContainer.TitleText)
     local background = window.Bg:CreateTexture(nil, "ARTWORK")
     background:SetAllPoints(window.Bg)
     background:SetColorTexture(0.105, 0.08, 0.06, 1)
@@ -547,6 +548,7 @@ local function CreateBookWindow(name, width, height)
     tinsert(UISpecialFrames, window:GetName())
 
     window:SetTitle("RainonUI")
+    if window.TitleContainer then ns.ApplyUIFont(window.TitleContainer.TitleText) end
     window:SetPortraitToAsset(portrait)
     -- Align the logo with the portrait rim without moving the template's circular mask.
     window:SetPortraitTexCoord(-0.05, 1.05, -0.01, 1.09)
@@ -600,7 +602,7 @@ function ns.BuildUpdateNotice(sections, option)
         ns.RefreshOptions()
     end)
 
-    local close = CreateFrame("Button", nil, window, "UIPanelButtonTemplate")
+    local close = ns.CreateTextButton(window, "UIPanelButtonTemplate")
     close:SetSize(102, 25)
     close:SetPoint("BOTTOMRIGHT", -24, 16)
     close:SetText("Закрыть")
@@ -656,6 +658,21 @@ function ns.BuildOptions(settings, extraOptions)
         page:SetPoint("BOTTOMRIGHT", -42, 42)
         local heading = BookText(page, "SystemFont_Huge2", entry.title)
         heading:SetPoint("TOPLEFT")
+        if entry.key == "general" then
+            local font = SettingsDropdown(page, page, 0)
+            local fontLabel = BookText(page, "SystemFont_Med1", "Шрифт")
+            fontLabel:SetPoint("RIGHT", font, "LEFT", -10, 0)
+            SetTooltip(font, "Шрифт RainonUI", function()
+                if not ns.HasEllesmereFont() then return "Для шрифта Ellesmere включи EllesmereUI в WoW Forever." end
+            end)
+            ns.SetupTextMenu(font, function(_, menu)
+                menu:CreateRadio("Стандартный", function() return ns.UIFontChoice() == "standard" end,
+                    function() ns.SetUIFontChoice("standard") end)
+                local option = menu:CreateRadio("Ellesmere", function() return ns.UIFontChoice() == "ellesmere" end,
+                    function() ns.SetUIFontChoice("ellesmere") end)
+                option:SetEnabled(ns.HasEllesmereFont())
+            end)
+        end
         if entry.subtitle then
             local label = BookText(page, "GameFontHighlightSmall", entry.subtitle)
             label:SetPoint("TOPLEFT", 0, -29)
@@ -705,7 +722,7 @@ function ns.BuildOptions(settings, extraOptions)
             menuButton:SetEnabled(ns.Enabled(feature))
         end
 
-        menuButton:SetupMenu(function(_, menu)
+        ns.SetupTextMenu(menuButton, function(_, menu)
             local showWarning = NeedsSelection()
             if showWarning then menu:CreateTitle(warning) end
             for quality = 2, maxQuality do
@@ -735,7 +752,7 @@ function ns.BuildOptions(settings, extraOptions)
                         ns.ToggleAutoGreedIgnored(key)
                     end)
                     option:AddInitializer(function(row)
-                        row.fontString:SetFontObject(GameFontHighlight)
+                        ns.ApplyMenuFont(row.fontString)
                         return row.fontString:GetUnboundedStringWidth() + 32, 24
                     end)
                 end
