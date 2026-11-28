@@ -177,6 +177,39 @@ local function SettingsDropdown(page, anchor, y)
     return dropdown
 end
 
+function ns.BuildBattleVoiceOptions(page, bookText, y)
+    local heading = bookText(page, "SystemFont_Large", "Озвучка")
+    heading:SetPoint("TOPLEFT", 0, y)
+    local dropdown = SettingsDropdown(page, page, y + 4)
+    ns.SetupTextMenu(dropdown, function(_, menu)
+        for _, battlefield in ipairs(ns.BattleVoiceMaps) do
+            local map = battlefield.id
+            local submenu = menu:CreateButton(battlefield.label)
+            for _, faction in ipairs(ns.BattleVoiceFactions) do
+                local side = faction.key
+                submenu:CreateTitle(faction.label)
+                submenu:CreateCheckbox("Включить озвучку", function()
+                    return ns.BattleVoiceEnabled(side, nil, map)
+                end, function()
+                    ns.SetBattleVoiceEnabled(side, nil, not ns.BattleVoiceEnabled(side, nil, map), map)
+                end)
+                for _, event in ipairs(battlefield.events) do
+                    local key = event
+                    local available = ns.BattleVoiceAvailable(side, key)
+                    local title = ns.BattleVoiceOptions[key]
+                    local option = submenu:CreateCheckbox(available and title or (title .. " (позже)"), function()
+                        return ns.BattleVoiceEnabled(side, key, map)
+                    end, function()
+                        ns.SetBattleVoiceEnabled(side, key, not ns.BattleVoiceEnabled(side, key, map), map)
+                    end)
+                    option:SetEnabled(available)
+                end
+            end
+        end
+    end)
+    dropdown:OverrideText("Выбрать звуки")
+end
+
 local function FlightSoundOptions(page, check)
     local dropdown = SettingsDropdown(page, check)
     ns.SetupTextMenu(dropdown, function(_, menu)
@@ -613,6 +646,20 @@ end
 
 function ns.BuildOptions(settings, extraOptions)
     local window = CreateBookWindow("RainonUIForeverOptions", 578, 720)
+    local header = window.TitleContainer
+    local portraitRim = window.NineSlice.TopLeftCorner
+    local close = window.CloseButton
+    local _, _, _, _, portraitOffset = portraitRim:GetPoint()
+    local _, _, _, _, closeOffset = close:GetPoint()
+    header:ClearAllPoints()
+    header:SetPoint("TOPLEFT", portraitRim, "TOPRIGHT", 0, -1 - (portraitOffset or 0))
+    header:SetPoint("TOPRIGHT", close, "TOPLEFT", 0, -1 - (closeOffset or 0))
+    local title = header.TitleText
+    title:ClearAllPoints()
+    title:SetAllPoints(header)
+    title:SetJustifyH("CENTER")
+    title:SetJustifyV("MIDDLE")
+
     local tabButtons, pagesByKey = {}, {}
     local windowTabs = {}
     for _, entry in ipairs(tabs) do

@@ -1,8 +1,8 @@
-## 0.5.0
+## 0.6.0
 
-- Added an optional battleground timer window with countdowns, capture timers, and victory forecasts for Arathi Basin and Darkspear Islands. Change its scale with the window buttons.
-- Added a font selector in General settings. The Ellesmere font is available when EllesmereUI provides it.
-- Updated battleground mark alerts to show the current total and warn again on entering the matching battleground at 25 marks or more.
-- Added a battleground breakdown to the PvP rank calculator, ordered by the fewest wins needed. Alterac Valley is excluded from rank estimates.
-- Aligned currency icons and quantities in the battleground journal.
-- Weekly quest reminders now hide during combat and in PvP instances.
+- Added voice alerts for Horde assaults and captures in Arathi Basin and Darkspear Islands, plus flag pickups and captures in Warsong Gulch and Darkspear Islands. Pick factions and events for each battleground in PvP settings. Horde alerts are enabled by default.
+- Added indicators for remaining Alliance bunkers and Horde towers in Alterac Valley. Battleground timer windows remember their position, and Arathi Basin objectives use in-game icons.
+- Enabled all PvP checkboxes by default for new settings. Existing choices are preserved.
+- Updated currency alerts to fit their text. Green mark alerts show once per login for 30 seconds. At 25 marks or more, the movable red alert stays until the total drops below 25.
+- Sorted Need rolls from highest to lowest and aligned their values in a separate column. Greed winners appear in the winner line. RainonUI pauses its loot-roll window and automatic Greed during battlegrounds.
+- Centered the settings window title and the PvP rank and battleground journal headers.

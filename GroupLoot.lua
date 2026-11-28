@@ -82,34 +82,49 @@ local function VoterName(info, name, getRole)
     return icon and (icon .. " " .. name) or name
 end
 
-function ns.BuildGroupLootVoteText(rollInfos, getRole, winner)
+local function IsNeed(state)
+    return state == rollStates.NeedMainSpec or state == rollStates.NeedOffSpec
+end
+
+function ns.BuildGroupLootVotes(rollInfos, getRole, winner)
     getRole = getRole or AssignedRole
     local names, pending, voted = {}, {}, 0
     local winnerName = winner and SafeString(winner.playerName)
     local winnerGUID = winner and SafeString(winner.playerGUID)
-    local winnerListed = false
+    local winnerListed
     for _, info in ipairs(rollInfos) do
         local state = ns.Number(info.state)
         if state == rollStates.NoRoll then
             pending[#pending + 1] = VoterIcon(getRole(info), SafeString(info.playerClass)) or "|T134400:12:12|t"
         elseif state then
             voted = voted + 1
-            if state == rollStates.NeedMainSpec or state == rollStates.NeedOffSpec then
+            if IsNeed(state) then
                 local name = SafeString(info.playerName)
                 if name and name ~= "" then
-                    names[#names + 1] = { name = name, info = info }
-                    winnerListed = winnerListed or name == winnerName
-                        or (winnerGUID and SafeString(info.playerGUID) == winnerGUID)
+                    local roll = ns.Number(info.roll)
+                    local guid = SafeString(info.playerGUID)
+                    local won = winner and (winnerGUID and guid and winnerGUID == guid
+                        or (not winnerGUID or not guid) and name == winnerName)
+                    if not roll or roll <= 0 then roll = won and ns.Number(winner.roll) or nil end
+                    winnerListed = winnerListed or won
+                    names[#names + 1] = { name = name, info = info, roll = roll }
                 end
             end
         end
     end
-    if winnerName and winnerName ~= "" and not winnerListed then
-        names[#names + 1] = { name = winnerName, info = winner }
+    if winnerName and winnerName ~= "" and not winnerListed and IsNeed(ns.Number(winner.state)) then
+        names[#names + 1] = { name = winnerName, info = winner, roll = ns.Number(winner.roll) }
     end
-    table.sort(names, function(a, b) return a.name < b.name end)
+    table.sort(names, function(a, b)
+        local aRoll, bRoll = math.max(0, a.roll or 0), math.max(0, b.roll or 0)
+        if aRoll ~= bRoll then return aRoll > bRoll end
+        return a.name < b.name
+    end)
     for index, voter in ipairs(names) do
-        names[index] = VoterName(voter.info, voter.name, getRole)
+        names[index] = {
+            label = VoterName(voter.info, voter.name, getRole),
+            roll = voter.roll and voter.roll > 0 and voter.roll or nil,
+        }
     end
     local header
     if winnerName and winnerName ~= "" then
@@ -118,21 +133,23 @@ function ns.BuildGroupLootVoteText(rollInfos, getRole, winner)
         header = ("Голосование: %d/%d"):format(voted, #rollInfos)
         if #pending > 0 then header = header .. "  " .. table.concat(pending, " ") end
     end
-    return #names > 0 and header .. "\n" .. table.concat(names, "\n") or header
+    return { header = header, voters = names }
 end
 
 local panel, scroll, content, grow, shrink
 local rows, drops, updates = {}, {}, {}
+local lootHandlers, pendingGreed = {}, {}
+local lootEvents
 local DrawNeed
-local renderPending, preview
+local historyTimer, preview, previewTimer
 local historyGeneration, entryOrder = 0, 0
 local rowCount = 0
 local rowHeight = 42
 local topInset, bottomInset = 30, 8
 local panelInset, scrollBarInset, scrollBarGap = 12, 30, 4
 local panelPadding = topInset + bottomInset
-local textInset, textGap = 36, 3
-local contentWidth, ballotWidth, textWidth, ballotSize, ballotFlags
+local textInset, textGap, rollGap = 36, 3, 8
+local contentWidth, ballotWidth, textWidth, rollWidth, ballotSize, ballotFlags
 local maxItemNameChars = #ns.GroupLootPreviewNames[1]
 local itemNameEllipsis = "..."
 local minVisibleRows, maxVisibleRows, resultDuration = 2, 10, 5
@@ -153,8 +170,12 @@ local function VisibleRows()
     return math.max(minVisibleRows, math.min(maxVisibleRows, math.floor(count)))
 end
 
+local function LootTime()
+    return history and history.GetLootHistoryTime and ns.Number(history.GetLootHistoryTime()) or GetTime()
+end
+
 local function PruneExpired()
-    local now = history and history.GetLootHistoryTime and ns.Number(history.GetLootHistoryTime())
+    local now = LootTime()
     if not now then return end
     for key, entry in pairs(drops) do
         if entry.expires <= now then drops[key] = nil end
@@ -164,7 +185,7 @@ end
 local function TrimRetainedResults(entries)
     local limit = maxRetainedDrops + (preview and #preview or 0)
     if not KeepResults() or #entries <= limit then return end
-    local now = ns.Number(history.GetLootHistoryTime())
+    local now = LootTime()
     for index = #entries, limit + 1, -1 do
         local entry = entries[index]
         if now and entry.expires <= now then
@@ -243,6 +264,7 @@ local function CreatePanel()
     -- Measure between letters so the font does not discard trailing spaces.
     local rightPadding = measure:GetUnboundedStringWidthForText("M  M") - measure:GetUnboundedStringWidthForText("MM")
     textWidth = math.ceil(ballotWidth + rightPadding)
+    rollWidth = math.ceil(measure:GetUnboundedStringWidthForText("888")) + 4
     contentWidth = textInset + textWidth
     panel:SetWidth(horizontalMargins + textWidth)
 
@@ -315,8 +337,16 @@ local function CreateRow()
     row:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetHyperlink(self.link)
-        GameTooltip:AddLine(self.votes, 1, 1, 1, true)
-        ns.UseCyrillicTooltipFont(GameTooltip)
+        local first = GameTooltip:NumLines() + 1
+        GameTooltip:AddLine(self.votes.header, 1, 1, 1, true)
+        for _, voter in ipairs(self.votes.voters) do
+            if voter.roll then
+                GameTooltip:AddDoubleLine(voter.label, tostring(voter.roll), 1, 1, 1, 1, 1, 1)
+            else
+                GameTooltip:AddLine(voter.label, 1, 1, 1, true)
+            end
+        end
+        ns.StyleTooltipLines(GameTooltip, first)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function(self)
@@ -342,19 +372,32 @@ local function CreateRow()
     row.ballot:SetWidth(textWidth)
     row.ballot:SetJustifyH("LEFT")
     row.ballot:SetWordWrap(true)
-    row.voters = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlightSmall")
-    row.voters:SetPoint("TOPLEFT", row.ballot, "BOTTOMLEFT", 0, -textGap)
-    row.voters:SetWidth(textWidth)
-    row.voters:SetJustifyH("LEFT")
-    row.voters:SetWordWrap(true)
+    row.voterLines = {}
     ns.ApplyUIFont(row.ballot, ballotSize, ballotFlags)
-    ns.ApplyUIFont(row.voters, ballotSize, ballotFlags)
     row.divider = row:CreateTexture(nil, "ARTWORK")
     row.divider:SetTexture("Interface\\Common\\UI-TooltipDivider-Transparent")
     row.divider:SetHeight(6)
     row.divider:SetPoint("BOTTOMLEFT")
     row.divider:SetPoint("BOTTOMRIGHT")
     return row
+end
+
+local function CreateVoterLine(row, index)
+    local name = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlightSmall")
+    local previous = row.voterLines[index - 1]
+    name:SetPoint("TOPLEFT", previous and previous.name or row.ballot, "BOTTOMLEFT", 0, previous and 0 or -textGap)
+    name:SetWidth(ballotWidth - rollWidth - rollGap)
+    name:SetJustifyH("LEFT")
+    name:SetWordWrap(true)
+    ns.ApplyUIFont(name, ballotSize, ballotFlags)
+
+    local roll = ns.CreateText(row, nil, "OVERLAY", "GameFontHighlightSmall")
+    roll:SetPoint("TOPLEFT", name, "TOPRIGHT", rollGap, 0)
+    roll:SetWidth(rollWidth)
+    roll:SetJustifyH("RIGHT")
+    roll:SetWordWrap(false)
+    ns.ApplyUIFont(roll, ballotSize, ballotFlags)
+    return { name = name, roll = roll }
 end
 
 local function DisplayItemName(link)
@@ -372,7 +415,16 @@ local function DisplayItemName(link)
     end, 1))
 end
 
+local function InBattlefield()
+    local _, kind = GetInstanceInfo()
+    return kind == "pvp"
+end
+
 DrawNeed = function(resetScroll)
+    if InBattlefield() then
+        if panel then panel:Hide() end
+        return
+    end
     local entries = {}
     for key, entry in pairs(drops) do
         if ns.Enabled("groupNeed") and ns.IsLootQualitySelected("groupNeed", entry.quality) then
@@ -414,7 +466,7 @@ DrawNeed = function(resetScroll)
         end
         if row.votes ~= entry.votes or not row.bottom then
             row.votes = entry.votes
-            local ballot, voters = entry.votes:match("^([^\n]*)\n?(.*)$")
+            local ballot = entry.votes.header
             local isWinner = ballot:sub(1, #winnerPrefix) == winnerPrefix
             row.ballot:SetWordWrap(not isWinner)
             ns.ApplyUIFont(row.ballot, ballotSize, ballotFlags)
@@ -426,11 +478,24 @@ DrawNeed = function(resetScroll)
                 end
             end
             row.ballot:SetText(ballot)
-            row.voters:SetText(voters)
-            row.voters:SetShown(voters ~= "")
+            for i, voter in ipairs(entry.votes.voters) do
+                local line = row.voterLines[i] or CreateVoterLine(row, i)
+                row.voterLines[i] = line
+                line.name:SetText(voter.label)
+                line.name:Show()
+                line.roll:SetText(voter.roll and tostring(voter.roll) or "")
+                line.roll:SetShown(voter.roll ~= nil)
+            end
+            for i = #entry.votes.voters + 1, #row.voterLines do
+                row.voterLines[i].name:Hide()
+                row.voterLines[i].roll:Hide()
+            end
         end
         local textHeight = row.name:GetStringHeight() + textGap + row.ballot:GetStringHeight()
-        if row.voters:IsShown() then textHeight = textHeight + textGap + row.voters:GetStringHeight() end
+        if #entry.votes.voters > 0 then textHeight = textHeight + textGap end
+        for i = 1, #entry.votes.voters do
+            textHeight = textHeight + row.voterLines[i].name:GetStringHeight()
+        end
         local entryHeight = math.max(rowHeight, textHeight + 10)
         if row.top ~= height then
             row:ClearAllPoints()
@@ -452,17 +517,20 @@ DrawNeed = function(resetScroll)
 end
 
 function ns.ShowGroupLootSample(links, votes)
-    if type(links) == "string" then links = { links } end
+    if InBattlefield() then return end
+    if type(links) == "string" then links, votes = { links }, { votes } end
     local sample = {}
     for index, link in ipairs(links) do
         sample[index] = {
-            link = link, votes = type(votes) == "table" and votes[index] or votes,
+            link = link, votes = votes[index],
             start = math.huge, order = -index,
         }
     end
+    if previewTimer then previewTimer:Cancel() end
     preview = sample
     DrawNeed(true)
-    C_Timer.After(resultDuration, function()
+    previewTimer = C_Timer.NewTimer(resultDuration, function()
+        previewTimer = nil
         if preview ~= sample then return end
         sample.expired = true
         if not KeepResults() then
@@ -484,11 +552,31 @@ local function FindQuality(link)
     end
 end
 
+local function NewDrop(key, link, quality, start)
+    entryOrder = entryOrder + 1
+    local entry = { key = key, order = entryOrder, link = link, quality = quality, start = start }
+    drops[key] = entry
+    return entry
+end
+
+local function SetDropExpiry(entry, expires, now)
+    if entry.expires == expires then return end
+    if entry.timer then entry.timer:Cancel() end
+    entry.expires = expires
+    entry.timer = C_Timer.NewTimer(math.max(0, expires - now), function()
+        entry.timer = nil
+        if drops[entry.key] == entry and entry.expires == expires and (entry.dismissed or not KeepResults()) then
+            drops[entry.key] = nil
+            DrawNeed()
+        end
+    end)
+end
+
 local function UpdateDrop(encounterID, lootID, drop, now)
     local key = historyGeneration .. ":" .. encounterID .. ":" .. lootID
     local old = drops[key]
-    if old and old.dismissed then return end
     local link = drop and SafeString(drop.itemHyperlink)
+    if old and old.dismissed then return end
     if not link and old and KeepResults() then return end
     local quality = old and old.link == link and old.quality or link and FindQuality(link)
     if not ns.IsLootQualitySelected("groupNeed", quality) then
@@ -509,26 +597,11 @@ local function UpdateDrop(encounterID, lootID, drop, now)
         drops[key] = nil
         return
     end
-    local entry = old
-    if not entry then
-        entryOrder = entryOrder + 1
-        entry = { key = key, order = entryOrder }
-    end
+    local entry = old or NewDrop(key, link, quality, start)
     entry.link, entry.quality, entry.start = link, quality, start
-    entry.votes = ns.BuildGroupLootVoteText(drop.rollInfos or {}, nil, drop.winner)
+    entry.votes = ns.BuildGroupLootVotes(drop.rollInfos or {}, nil, drop.winner)
     entry.finished = finished
-    drops[key] = entry
-    if entry.expires ~= expires then
-        entry.expires = expires
-        if expires > now then
-            C_Timer.After(expires - now, function()
-                if drops[key] == entry and entry.expires == expires and (entry.dismissed or not KeepResults()) then
-                    drops[key] = nil
-                    DrawNeed()
-                end
-            end)
-        end
-    end
+    SetDropExpiry(entry, expires, now)
     return not old
 end
 
@@ -550,8 +623,7 @@ local function RefreshNeed()
 end
 
 local function QueueHistory(encounterID, lootID)
-    if not (ns.Enabled("groupNeed") and ns.HasLootQualitySelected("groupNeed")) then return end
-    if not encounterID then return end
+    if InBattlefield() or not (ns.Enabled("groupNeed") and ns.HasLootQualitySelected("groupNeed")) then return end
     -- One history query per changed drop or encounter, grouped across rapid votes.
     if not lootID then
         updates[encounterID] = true
@@ -559,20 +631,18 @@ local function QueueHistory(encounterID, lootID)
         updates[encounterID] = updates[encounterID] or {}
         updates[encounterID][lootID] = true
     end
-    if renderPending then return end
-    renderPending = true
-    C_Timer.After(0.1, function()
-        renderPending = false
+    if historyTimer then return end
+    historyTimer = C_Timer.NewTimer(0.1, function()
+        historyTimer = nil
         local pending = updates
         updates = {}
-        if not (ns.Enabled("groupNeed") and ns.HasLootQualitySelected("groupNeed")) then return end
-        local now = ns.Number(history.GetLootHistoryTime())
-        if not now then return end
+        if InBattlefield() or not (ns.Enabled("groupNeed") and ns.HasLootQualitySelected("groupNeed")) then return end
+        local now = LootTime()
         local newEntry = false
         for id, changed in pairs(pending) do
             if changed == true then
                 for _, drop in ipairs(history.GetSortedDropsForEncounter(id) or {}) do
-                    local loot = ns.Number(drop.lootListID) or ns.Number(drop.lootListKey)
+                    local loot = ns.Number(drop.lootListKey) or ns.Number(drop.lootListID)
                     if loot and UpdateDrop(id, loot, drop, now) then newEntry = true end
                 end
             else
@@ -589,22 +659,35 @@ ns.AddSetting("groupNeed", "Групповая добыча: кто выбрал
 ns.AddSetting("autoGreed", "Автовыбор: Не откажусь", nil, true, "equipment")
 
 if history and history.GetSortedInfoForDrop and history.GetSortedDropsForEncounter and history.GetLootHistoryTime and rollStates then
-    ns.On("LOOT_HISTORY_UPDATE_DROP", function(encounterID, lootID)
-        QueueHistory(ns.Number(encounterID), ns.Number(lootID))
-    end)
-    ns.On("LOOT_HISTORY_UPDATE_ENCOUNTER", function(encounterID)
-        QueueHistory(ns.Number(encounterID))
-    end)
-    ns.On("LOOT_HISTORY_CLEAR_HISTORY", function()
+    function lootHandlers.LOOT_HISTORY_UPDATE_DROP(encounterID, lootID)
+        local id = ns.Number(encounterID)
+        if id then QueueHistory(id, ns.Number(lootID)) end
+    end
+    function lootHandlers.LOOT_HISTORY_UPDATE_ENCOUNTER(encounterID)
+        local id = ns.Number(encounterID)
+        if id then QueueHistory(id) end
+    end
+    function lootHandlers.LOOT_HISTORY_CLEAR_HISTORY()
         wipe(updates)
         historyGeneration = historyGeneration + 1
         if not KeepResults() then wipe(drops) end
         DrawNeed()
-    end)
+    end
+end
+
+local function ClearPendingGreed(rollID)
+    local token = pendingGreed[rollID]
+    if not token then return end
+    if token.chooseTimer then token.chooseTimer:Cancel() end
+    if token.expireTimer then token.expireTimer:Cancel() end
+    pendingGreed[rollID] = nil
+end
+
+local function ClearAutoGreed()
+    for rollID in pairs(pendingGreed) do ClearPendingGreed(rollID) end
 end
 
 if RollOnLoot and GetLootRollItemInfo then
-    local pending = {}
     local recipeClass = Enum.ItemClass and Enum.ItemClass.Recipe or 9
     local getItemInfoInstant = C_Item.GetItemInfoInstant or GetItemInfoInstant
     local function CanRollOnItem(rollID)
@@ -624,32 +707,71 @@ if RollOnLoot and GetLootRollItemInfo then
             and canGreed == true and canTransmog ~= true
     end
 
-    ns.On("START_LOOT_ROLL", function(rollID, rollTime)
+    function lootHandlers.START_LOOT_ROLL(rollID, rollTime)
         rollID = ns.Number(rollID)
-        if not rollID or pending[rollID] or not CanAutoGreed(rollID) then return end
+        if not rollID or pendingGreed[rollID] or not CanAutoGreed(rollID) then return end
         local token = {}
-        pending[rollID] = token
-        C_Timer.After(0, function()
-            if pending[rollID] ~= token then return end
+        pendingGreed[rollID] = token
+        token.chooseTimer = C_Timer.NewTimer(0, function()
+            token.chooseTimer = nil
+            if pendingGreed[rollID] ~= token or InBattlefield() then return end
             if not CanAutoGreed(rollID) or not CanRollOnItem(rollID) then
-                pending[rollID] = nil
+                ClearPendingGreed(rollID)
                 return
             end
             if GetLootRollTimeLeft and (ns.Number(GetLootRollTimeLeft(rollID)) or 0) <= 0 then
-                pending[rollID] = nil
+                ClearPendingGreed(rollID)
                 return
             end
             -- Let the client's START_LOOT_ROLL handlers finish before voting.
             -- The client still handles any required confirmation.
             pcall(RollOnLoot, rollID, rollTypes and rollTypes.Greed or 2)
         end)
-        C_Timer.After((ns.Number(rollTime) or 60000) / 1000 + 1, function()
-            if pending[rollID] == token then pending[rollID] = nil end
+        token.expireTimer = C_Timer.NewTimer((ns.Number(rollTime) or 60000) / 1000 + 1, function()
+            if pendingGreed[rollID] == token then pendingGreed[rollID] = nil end
         end)
-    end)
-    ns.On("CANCEL_LOOT_ROLL", function(rollID)
+    end
+
+    function lootHandlers.CANCEL_LOOT_ROLL(rollID)
         rollID = ns.Number(rollID)
-        if rollID then pending[rollID] = nil end
-    end)
-    ns.On("CANCEL_ALL_LOOT_ROLLS", function() wipe(pending) end)
+        if rollID then ClearPendingGreed(rollID) end
+    end
+
+    lootHandlers.CANCEL_ALL_LOOT_ROLLS = ClearAutoGreed
 end
+
+local function StopLootEvents()
+    if lootEvents then lootEvents:UnregisterAllEvents() end
+    if historyTimer then
+        historyTimer:Cancel()
+        historyTimer = nil
+    end
+    wipe(updates)
+    ClearAutoGreed()
+end
+
+ns.On("PLAYER_LEAVING_WORLD", StopLootEvents)
+ns.On("PLAYER_ENTERING_WORLD", function()
+    if InBattlefield() then
+        StopLootEvents()
+        for _, entry in pairs(drops) do
+            if entry.timer then entry.timer:Cancel() end
+        end
+        wipe(drops)
+        if previewTimer then
+            previewTimer:Cancel()
+            previewTimer = nil
+        end
+        preview = nil
+        rowCount = 0
+        DrawNeed()
+        return
+    end
+    if not lootEvents then
+        lootEvents = CreateFrame("Frame")
+        lootEvents:SetScript("OnEvent", function(_, event, ...)
+            if not InBattlefield() then lootHandlers[event](...) end
+        end)
+    end
+    for event in pairs(lootHandlers) do lootEvents:RegisterEvent(event) end
+end)

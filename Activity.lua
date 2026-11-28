@@ -17,10 +17,27 @@ local reminderX, reminderY, reminderDragging
 local showing
 local reminderQueue = {}
 
+local function FitReminder(box, label)
+    box:SetWidth(math.ceil(label:GetUnboundedStringWidth()) + 24)
+end
+
+local function CreateReminderBox()
+    local box, label = ns.CreateTimerBox()
+    box:SetHeight(box:GetHeight() * 1.5)
+    label:SetWordWrap(false)
+    return box, label
+end
+
+local function WriteReminder(box, label, alert)
+    label:SetFormattedText("|T%d:20:20|t %s", alert.icon, alert.text)
+    label:SetTextColor(unpack(alert.color))
+    FitReminder(box, label)
+end
+
 local DismissReminder
 local function StartReminderTimer()
     if hideTimer then hideTimer:Cancel() end
-    hideTimer = C_Timer.NewTimer(10, function()
+    hideTimer = C_Timer.NewTimer(showing.seconds or 10, function()
         hideTimer = nil
         DismissReminder()
     end)
@@ -39,11 +56,11 @@ end
 
 local function ShowReminder(alert)
     if not reminder then
-        reminder, reminderLabel = ns.CreateTimerBox()
+        reminder, reminderLabel = CreateReminderBox()
         reminder:SetMovable(true)
         reminder:RegisterForDrag("LeftButton")
         reminder:SetScript("OnDragStart", function(box)
-            if not showing or showing.key == "boss" then return end
+            if not showing or not showing.movable then return end
             reminderDragging = true
             if hideTimer then
                 hideTimer:Cancel()
@@ -59,12 +76,14 @@ local function ShowReminder(alert)
     end
     StopReminderDrag()
     showing = alert
-    local movable = alert.key ~= "boss"
+    if alert.greenMark and not alert.preview then
+        ns.db.markWarningsThisLogin[alert.key] = true
+    end
+    local movable = alert.movable == true
     reminder:EnableMouse(movable)
     reminder:ClearAllPoints()
     reminder:SetPoint("CENTER", UIParent, "CENTER", movable and reminderX or 0, movable and reminderY or 0)
-    reminderLabel:SetFormattedText("|T%d:20:20|t %s", alert.icon, alert.text)
-    reminderLabel:SetTextColor(unpack(alert.color))
+    WriteReminder(reminder, reminderLabel, alert)
     reminder:Show()
     StartReminderTimer()
 end
@@ -179,6 +198,8 @@ end
 
 local function PvPAlert(key, icon, tier, amount)
     return {key = key, icon = icon, color = alertColors[tier],
+        movable = key == "honor" or tier == 2, greenMark = amount ~= nil and tier == 1,
+        seconds = amount and tier == 1 and 30 or nil,
         text = amount and ("%s %d / 30"):format(tier == 2 and "Потрать жетоны!" or "Жетоны", amount)
             or (tier == 2 and "Потрать валюту!" or "Потратить валюту?")}
 end
@@ -199,21 +220,65 @@ local function CheckAlert(guid, key, icon, amount, warningAt, urgentAt)
     end
 end
 
--- Mark reminders are rearmed on login. Bag events can fire repeatedly for one reward.
-local lastMarks = {}
-local function CheckMarkAlerts(enteringMap)
+local urgentMarks, lastMarks = {}, {}
+
+function ns.RefreshActivityReminderLayout()
+    if reminder then FitReminder(reminder, reminderLabel) end
+    for _, notice in pairs(urgentMarks) do FitReminder(notice.box, notice.label) end
+end
+
+local function ShowUrgentMark(index, alert)
+    local notice = urgentMarks[alert.key]
+    if not notice then
+        local box, label = CreateReminderBox()
+        notice = {box = box, label = label}
+        urgentMarks[alert.key] = notice
+        box:SetPoint("TOP", UIParent, "CENTER", 0, -32 - (index - 1) * (box:GetHeight() + 4))
+        box:SetMovable(true)
+        box:EnableMouse(true)
+        box:RegisterForDrag("LeftButton")
+        box:SetScript("OnDragStart", box.StartMoving)
+        box:SetScript("OnDragStop", box.StopMovingOrSizing)
+        box:SetScript("OnHide", box.StopMovingOrSizing)
+    end
+    WriteReminder(notice.box, notice.label, alert)
+    notice.box:Show()
+end
+
+local function ClearMarkAlerts()
+    wipe(lastMarks)
+    for _, notice in pairs(urgentMarks) do notice.box:Hide() end
+    for i = #reminderQueue, 1, -1 do
+        if reminderQueue[i].greenMark then table.remove(reminderQueue, i) end
+    end
+    if showing and showing.greenMark and not showing.preview then DismissReminder() end
+end
+
+local function CheckMarkAlerts()
     if not PvPEnabled("pvpMarkAlert") then return end
-    for _, map in ipairs(markOrder) do
+    local shown = ns.db.markWarningsThisLogin
+    if not shown then
+        shown = {}
+        ns.db.markWarningsThisLogin = shown
+    end
+    for index, map in ipairs(markOrder) do
         local field = battlefields[map]
+        local key = field.mark
         local amount = MarkCount(field)
-        if amount then
+        if amount and amount ~= lastMarks[map] then
             local previous = lastMarks[map]
             lastMarks[map] = amount
-            if previous and amount < previous then ClearReminder(field.mark, true) end
-            local urgent = amount >= 25
-            if amount >= 20 and (not previous or previous < 20
-                or (urgent and (amount > previous or map == enteringMap))) then
-                QueueReminder(PvPAlert(field.mark, MarkIcon(field), urgent and 2 or 1, amount))
+            if amount >= 25 then
+                ClearReminder(key, true)
+                ShowUrgentMark(index, PvPAlert(key, MarkIcon(field), 2, amount))
+            else
+                local notice = urgentMarks[key]
+                if notice then notice.box:Hide() end
+                if amount < 20 then
+                    ClearReminder(key, true)
+                elseif not shown[key] and (not previous or previous < 20) then
+                    QueueReminder(PvPAlert(key, MarkIcon(field), 1, amount))
+                end
             end
         end
     end
@@ -241,20 +306,23 @@ ns.AddSetting("pvpMarkAlert", "Лимит жетонов", function()
     if ns.Enabled("pvpMarkAlert") then
         CheckMarkAlerts()
     else
-        wipe(lastMarks)
-        for _, map in ipairs(markOrder) do ClearReminder(battlefields[map].mark, true) end
+        ClearMarkAlerts()
     end
-end, true, "pvp", {
-    icon = battlefields[529].icon, tooltip = "От 20 жетонов - напоминание. От 25 - при каждом пополнении и при входе на это поле боя. Лимит - 30.",
+end, false, "pvp", {
+    icon = battlefields[529].icon,
+    tooltip = "От 20 жетонов - 30 секунд один раз за вход. От 25 - пока жетонов не станет меньше 25. Лимит - 30.",
 })
 ns.AddSetting("pvpHonorAlert", "Лимит чести", function()
     if ns.Enabled("pvpHonorAlert") then CheckHonorAlert() else ClearReminder("honor", true) end
-end, true, "pvp", {
+end, false, "pvp", {
     icon = 2173919, tooltip = "Напоминания при 20 000 и 23 000 очках чести.",
 })
-ns.On("PLAYER_ENTERING_WORLD", function()
-    local _, kind, _, _, _, _, _, map = GetInstanceInfo()
-    CheckMarkAlerts(kind == "pvp" and map)
+ns.On("PLAYER_ENTERING_WORLD", function(initialLogin)
+    if initialLogin then
+        ns.db.markWarningsThisLogin = nil
+        wipe(lastMarks)
+    end
+    CheckMarkAlerts()
 end)
 ns.On("PLAYER_LOGIN", function() CheckHonorAlert() end)
 ns.On("CURRENCY_DISPLAY_UPDATE", CheckHonorAlert)
@@ -467,7 +535,7 @@ local function SyncBattle()
     if refreshJournal then refreshJournal() end
 end
 
-ns.AddSetting("battleLog", "Записывать поля боя", SyncBattle, true, "pvp", {
+ns.AddSetting("battleLog", "Записывать поля боя", SyncBattle, false, "pvp", {
     wrapTitle = true, icon = "Interface\\Icons\\INV_Misc_Book_11",
     tooltip = "Alt + ЛКМ по значку RainonUI открывает журнал полей боя.",
 })
@@ -476,7 +544,7 @@ ns.AddSetting("pvpRankPanel", "Панель ранга PvP", function()
 end, false, "pvp", {
     atlas = "UI-Character-Info-Honor-Icon-3", tooltip = "Показывает ранг, валюту и репутацию слева от журнала полей боя.",
 })
-ns.AddSetting("pvpAutoGossip", "Автодиалог распорядителей", nil, true, "pvp", {
+ns.AddSetting("pvpAutoGossip", "Автодиалог распорядителей", nil, false, "pvp", {
     icon = "Interface\\GossipFrame\\GossipGossipIcon",
     tooltip = "Выбирает первый пункт при разговоре с четырьмя распорядителями полей боя в Штормграде.",
 })
@@ -556,7 +624,7 @@ local function ApplyPvPSetting()
         return
     end
 
-    wipe(lastMarks)
+    ClearMarkAlerts()
     if journal then journal:Hide() end
     CloseGossip()
     CancelRankCheck()
@@ -575,11 +643,12 @@ end
 
 ns.AddSetting("pvp", "ПвП функции", ApplyPvPSetting, false, "general", {
     icon = allianceIcon,
-    tooltip = "При выключении скрывает вкладку и останавливает запись боёв, предупреждения и автодиалог.",
+    tooltip = "При выключении скрывает вкладку и отключает таймеры, озвучку, запись боёв, предупреждения и автодиалог.",
 })
 ns.tabsAfterGeneral = ns.tabsAfterGeneral or {}
 table.insert(ns.tabsAfterGeneral, {
     key = "pvp", title = "PvP", icon = allianceIcon, columns = 1, toggle = true,
+    afterSettings = ns.BuildBattleVoiceOptions,
 })
 ns.On("PLAYER_ENTERING_WORLD", SyncBattle)
 ns.On("PLAYER_LEAVING_WORLD", LeaveBattle)
@@ -941,13 +1010,26 @@ local function EstimateMatches(history, guid, progress)
     return best, estimates
 end
 
+local function CenterJournalTitle(window, size)
+    local header = window.TitleContainer
+    header:ClearAllPoints()
+    header:SetPoint("TOPLEFT", window, "TOPLEFT", 30, -1)
+    header:SetPoint("TOPRIGHT", window, "TOPRIGHT", -30, -1)
+    local title = header.TitleText
+    title:ClearAllPoints()
+    title:SetAllPoints(header)
+    title:SetJustifyH("CENTER")
+    title:SetJustifyV("MIDDLE")
+    ns.ApplyUIFont(title, size, "")
+end
+
 local function BuildRankPanel(window)
     local pane = CreateFrame("Frame", nil, window, "DefaultPanelFlatTemplate")
     pane:SetWidth(rankPanelWidth)
     pane:SetPoint("TOPRIGHT", window, "TOPLEFT", -rankPanelGap, 0)
     pane:SetPoint("BOTTOMRIGHT", window, "BOTTOMLEFT", -rankPanelGap, 0)
     pane:EnableMouse(true)
-    ns.ApplyUIFont(pane.TitleContainer.TitleText, 14, "")
+    CenterJournalTitle(pane, 14)
     pane.TitleContainer.TitleText:SetText("Ранг PvP")
     Fill(pane.Bg, 0.105, 0.08, 0.06, 1)
     local ring = CreateFrame("Cooldown", nil, pane)
@@ -1213,7 +1295,7 @@ local function BuildJournal()
     local window, close = ns.CreateLootPanel("RainonUIForeverBattleJournal", "Журнал полей боя", tableWidth + 32, tableTop + 2 * rowHeight + 16)
     window:SetPoint("CENTER")
     local rankPanel, refreshRankPanel, shownRankPanel
-    ns.ApplyUIFont(window.TitleContainer.TitleText, 15, "")
+    CenterJournalTitle(window, 15)
     window:SetMovable(true)
     local title = window.TitleContainer
     title:EnableMouse(true)

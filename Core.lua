@@ -150,6 +150,7 @@ function ns.SetUIFontChoice(choice)
         if not SetFace(region, UIFont(font[1]), font[2], font[3]) then SetFace(region, unpack(font)) end
     end
     if ns.RefreshBattleTimerLayout then ns.RefreshBattleTimerLayout() end
+    if ns.RefreshActivityReminderLayout then ns.RefreshActivityReminderLayout() end
 end
 
 local tooltipFonts = setmetatable({}, { __mode = "k" })
